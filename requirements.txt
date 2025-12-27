@@ -1,0 +1,44 @@
+# RLVR Project Dependencies
+# ===========================
+
+# Core
+torch>=2.0.0
+transformers>=4.40.0
+datasets>=2.0.0
+numpy>=1.24.0
+
+# Tinker Platform
+tinker  # pip install tinker
+
+# VERL Framework (optional, install from source for full features)
+# git clone https://github.com/volcengine/verl && cd verl && pip install -e .
+
+# Inference Acceleration
+vllm>=0.4.0  # for fast rollout generation
+# sglang  # alternative inference engine
+
+# Training Utilities
+accelerate>=0.20.0
+peft>=0.5.0  # for LoRA
+bitsandbytes>=0.40.0  # for quantization
+flash-attn>=2.0.0  # for flash attention (optional)
+
+# Logging & Visualization
+wandb>=0.15.0
+tensorboard>=2.13.0
+tqdm>=4.65.0
+
+# Evaluation
+lighteval  # for standard benchmarks
+# sympy  # for symbolic math verification
+
+# Development
+ipython>=8.0.0
+jupyter>=1.0.0
+pytest>=7.0.0
+black>=23.0.0
+isort>=5.12.0
+
+# Documentation
+mkdocs>=1.4.0
+mkdocs-material>=9.0.0

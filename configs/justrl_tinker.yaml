@@ -1,0 +1,185 @@
+# JustRL on Tinker - 配置文件
+# ================================
+# 基于论文 "JustRL: Simplicity at Scale" 的简化配置
+# 适配Tinker平台的LoRA微调
+#
+# 核心原则：
+# - 单阶段训练，固定超参数
+# - 无KL惩罚，无熵正则化
+# - 无长度惩罚（JustRL关键发现：长度惩罚有害）
+# - 使用clip-higher稳定训练
+
+# ========== 实验配置 ==========
+experiment:
+  name: "justrl_math_gsm8k"
+  description: "JustRL简化版 - Tinker平台数学推理训练"
+
+  # 实验规模预设
+  # quick: 快速验证 (~$50)
+  # medium: 学习实验 (~$800)
+  # full: 深入实验 (~$3500)
+  scale: "quick"
+
+# ========== 模型配置 ==========
+model:
+  # Tinker支持的模型选择
+  # 推荐: "Qwen/Qwen3-4B-Instruct-2507" (指令模型，初始正确率高，适合RLVR)
+  # 备选: "meta-llama/Llama-3.2-3B" (基座模型，需要先SFT)
+  # 备选: "meta-llama/Llama-3.1-8B-Instruct" (更强但成本高)
+  name: "Qwen/Qwen3-4B-Instruct-2507"
+
+  # LoRA配置 (Tinker目前仅支持LoRA)
+  lora:
+    rank: 64
+    alpha: 128  # 通常设为2*rank
+    target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+    dropout: 0.0  # JustRL不使用dropout
+
+# ========== 算法配置 ==========
+algorithm:
+  name: "grpo"
+
+  # JustRL核心配置
+  grpo:
+    # 每个prompt采样的response数量
+    rollout_n: 8
+
+    # Clip范围 - JustRL使用更宽的上界 (clip-higher)
+    clip_ratio_low: 0.8
+    clip_ratio_high: 1.28  # 关键：比标准PPO的1.2更宽
+
+    # JustRL关键：移除这些组件
+    kl_coef: 0.0           # 无KL惩罚
+    entropy_coef: 0.0      # 无熵正则化
+
+    # Advantage计算
+    normalize_advantage: true
+    advantage_clip: null   # 不裁剪advantage
+
+# ========== 奖励配置 ==========
+reward:
+  # 二元奖励 (DAPO verifier风格)
+  type: "binary"
+  correct_reward: 1.0
+  incorrect_reward: 0.0  # JustRL使用0而非负值
+
+  # JustRL关键：无长度惩罚
+  length_penalty:
+    enabled: false  # 论文发现长度惩罚有害
+
+  # 格式奖励（可选，帮助模型学习输出格式）
+  format_reward:
+    enabled: true
+    has_answer_bonus: 0.1  # 能提取出答案时的小奖励
+
+# ========== 训练配置 ==========
+training:
+  # 根据scale自动调整
+  scales:
+    quick:
+      num_steps: 200
+      batch_size: 32
+      eval_interval: 50
+      save_interval: 100
+    medium:
+      num_steps: 1000
+      batch_size: 64
+      eval_interval: 100
+      save_interval: 200
+    full:
+      num_steps: 2000
+      batch_size: 64
+      eval_interval: 200
+      save_interval: 500
+
+  # 优化器 - JustRL使用常数学习率
+  optimizer:
+    name: "adamw"
+    lr: 1.0e-6          # JustRL推荐值
+    weight_decay: 0.0   # 无权重衰减
+    betas: [0.9, 0.999]
+
+  # 学习率调度 - JustRL使用常数
+  scheduler:
+    name: "constant"    # 无warmup，无decay
+
+  # 梯度设置
+  max_grad_norm: 1.0
+  gradient_accumulation_steps: 1
+
+# ========== 生成配置 ==========
+generation:
+  max_prompt_length: 512
+  max_response_length: 4096  # Tinker限制，原论文用15k
+
+  # 采样参数
+  temperature: 1.0      # JustRL使用1.0
+  top_p: 1.0            # 不使用nucleus sampling
+  top_k: 0              # 不使用top-k
+
+  # 停止条件
+  stop_sequences: ["</s>", "<|endoftext|>", "<|im_end|>"]
+
+# ========== 数据配置 ==========
+data:
+  # 训练数据
+  train:
+    dataset: "gsm8k"
+    split: "train"
+    max_samples: null  # null表示使用全部
+
+  # 评估数据
+  eval:
+    dataset: "gsm8k"
+    split: "test"
+    max_samples: 200  # 快速评估
+
+  # Prompt模板
+  prompt_template: |
+    Solve the following math problem step by step. Show your reasoning clearly.
+    At the end, provide your final answer after "The answer is: ".
+
+    Problem: {question}
+
+    Solution:
+
+# ========== 日志配置 ==========
+logging:
+  # 本地日志
+  log_dir: "outputs/justrl"
+  log_level: "INFO"
+
+  # Wandb (可选)
+  wandb:
+    enabled: false  # 设为true启用
+    project: "rlvr-justrl"
+    name: null  # 自动生成
+
+# ========== 检查点配置 ==========
+checkpoint:
+  output_dir: "outputs/justrl/checkpoints"
+  save_total_limit: 3
+  resume_from: null  # 断点续训路径
+
+# ========== 成本估算 ==========
+# 基于Tinker定价 (Qwen3-4B-Instruct-2507: $0.22/M tokens)
+#
+# Quick (200步):
+#   - 每步tokens ≈ 32 × 8 × 4500 = 1.15M
+#   - 总tokens ≈ 230M
+#   - 成本 ≈ $50 (sample) + $50 (train) = ~$100
+#   - 实际可能更低，因为不是所有response都达到max_length
+#
+# Medium (1000步):
+#   - 每步tokens ≈ 64 × 8 × 4500 = 2.3M
+#   - 总tokens ≈ 2.3B
+#   - 成本 ≈ ~$1,000
+#
+# Full (2000步):
+#   - 总tokens ≈ 4.6B
+#   - 成本 ≈ ~$2,000
+#
+# 对比其他模型:
+#   - Llama-3.2-3B (base): $0.18/M → Quick: ~$80, Medium: ~$800
+#   - Llama-3.1-8B-Instruct: $0.40/M → Quick: ~$180, Medium: ~$1,800
+#   - Qwen3-4B性价比高：指令模型 + 中等成本 + 初始正确率高
