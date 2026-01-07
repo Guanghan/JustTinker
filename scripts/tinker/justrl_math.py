@@ -375,13 +375,14 @@ class JustRLTrainer:
             import torch
 
             # 构建训练数据（按Tinker cookbook的正确格式）
+            # PPO loss只接受3个字段：target_tokens, logprobs, advantages（不支持mask）
             data = []
             for sample in train_samples:
                 # 获取完整序列的tokens和logprobs（已包含prompt）
                 tokens = sample["tokens"]
                 logprobs = sample["logprobs"]
                 prompt_len = sample["prompt_length"]
-                advantage = sample["advantage"]
+                advantage = float(sample["advantage"])  # 确保是Python float
 
                 # 确保tokens和logprobs长度一致
                 seq_len = len(tokens)
@@ -389,28 +390,42 @@ class JustRLTrainer:
                     # 如果logprobs长度不对，用0填充
                     logprobs = logprobs[:seq_len] + [0.0] * (seq_len - len(logprobs))
 
-                # 创建right-shifted input和left-shifted targets
-                # 标准语言模型训练：input=tokens[:-1], target=tokens[1:]
-                input_tokens = tokens[:-1]   # 输入：位置 0 到 n-1
-                target_tokens = tokens[1:]   # 目标：位置 1 到 n
-                logprobs_shifted = logprobs[1:]  # logprobs也要对齐到target
+                # 按cookbook格式构建数据：
+                # input = tokens[:-1]（用于前向传播）
+                # target = tokens（用于计算loss，prompt部分用0填充）
+                input_tokens = tokens[:-1]
+                ob_len = prompt_len - 1  # observation length (prompt部分在input中的长度)
 
-                # 创建mask：0.0 for prompt tokens, 1.0 for response tokens
-                # mask长度应该与target_tokens一致
-                mask = [0.0] * (prompt_len - 1) + [1.0] * (len(target_tokens) - (prompt_len - 1))
+                # 按cookbook格式：用0填充prompt部分，保持对齐
+                # target_tokens: [0]*ob_len + tokens[ob_len:]
+                target_tokens = [0] * ob_len + tokens[ob_len:]
+                # 确保长度与input_tokens一致
+                target_tokens = target_tokens[:len(input_tokens)]
 
-                # 创建ModelInput（使用input_tokens）
+                # logprobs: [0.0]*ob_len + logprobs[ob_len:]
+                padded_logprobs = [0.0] * ob_len + logprobs[ob_len:]
+                padded_logprobs = padded_logprobs[:len(input_tokens)]
+
+                # advantages: [0.0]*ob_len + [advantage]*(len-ob_len)
+                padded_advantages = [0.0] * ob_len + [advantage] * (len(input_tokens) - ob_len)
+
+                # 创建ModelInput
                 model_input = tinker.ModelInput.from_ints(input_tokens)
 
-                # 创建Datum对象（4个必需字段）
-                # 参考官方cookbook：model_input和target_tokens是shifted的
+                # 创建Datum对象（只有3个字段，不包含mask）
+                # 注意：必须指定正确的数据类型
                 datum = tinker.Datum(
                     model_input=model_input,
                     loss_fn_inputs={
-                        "target_tokens": tinker.TensorData.from_torch(torch.tensor(target_tokens)),
-                        "logprobs": tinker.TensorData.from_torch(torch.tensor(logprobs_shifted)),
-                        "advantages": tinker.TensorData.from_torch(torch.tensor([advantage] * len(target_tokens))),
-                        "mask": tinker.TensorData.from_torch(torch.tensor(mask)),
+                        "target_tokens": tinker.TensorData.from_torch(
+                            torch.tensor(target_tokens, dtype=torch.long)
+                        ),
+                        "logprobs": tinker.TensorData.from_torch(
+                            torch.tensor(padded_logprobs, dtype=torch.float32)
+                        ),
+                        "advantages": tinker.TensorData.from_torch(
+                            torch.tensor(padded_advantages, dtype=torch.float32)
+                        ),
                     }
                 )
                 data.append(datum)
@@ -459,6 +474,8 @@ class JustRLTrainer:
         sampling_client: Any,
     ) -> Dict[str, float]:
         """评估模型（greedy decoding）"""
+        import tinker
+
         # 评估时使用greedy decoding
         eval_sampling_params = SamplingParams(
             max_tokens=self.config.max_response_length,
@@ -469,13 +486,27 @@ class JustRLTrainer:
         total = len(prompts)
 
         for prompt, gold in zip(prompts, gold_answers):
-            response = sampling_client.sample(
-                prompt=prompt,
+            # Tokenize prompt（与train_step保持一致）
+            prompt_tokens = self.tokenizer.encode(prompt)
+            model_input = tinker.ModelInput.from_ints(prompt_tokens)
+
+            # 采样（返回Future，需要调用.result()）
+            future = sampling_client.sample(
+                prompt=model_input,
                 sampling_params=eval_sampling_params,
                 num_samples=1,  # 评估时生成1个样本
             )
+            sample_result = future.result()
 
-            result = self.verifier.verify(response, gold)
+            # 解码response文本
+            if sample_result.sequences:
+                seq = sample_result.sequences[0]
+                tokens = list(seq.tokens) if hasattr(seq.tokens, '__iter__') else seq.tokens
+                response_text = self.tokenizer.decode(tokens, skip_special_tokens=True)
+            else:
+                response_text = ""
+
+            result = self.verifier.verify(response_text, gold)
             if result["is_correct"]:
                 correct += 1
 
