@@ -100,10 +100,14 @@ class JustRLConfig:
         """根据scale调整参数"""
         scale_configs = {
             "quick": {
-                "num_steps": 2, #200,
-                "batch_size": 2, #32,
-                "eval_interval": 2, #50,
-                "save_interval": 2, #100,
+                "num_steps": 2,
+                "batch_size": 2,
+                "eval_interval": 2,
+                "save_interval": 2,
+                #"num_steps": 200,
+                #"batch_size": 32,
+                #"eval_interval": 20,#50,
+                #"save_interval": 20,#100,
             },
             "medium": {
                 "num_steps": 1000,
@@ -180,26 +184,38 @@ class MathVerifier:
         import re
         self.re = re
 
+        # 数字模式：支持负号、逗号分隔、小数点
+        # 例如: 18, -18, 70,000, 3.14, -1,234.56
+        num_pattern = r"-?\$?\s*\d+(?:,\d{3})*(?:\.\d+)?"
+
         self.patterns = [
-            r"[Tt]he (?:final )?answer is:?\s*(-?\d+(?:,\d{3})*(?:\.\d+)?)",
-            r"####\s*(-?\d+(?:,\d{3})*(?:\.\d+)?)",
+            # "The answer is: $18." 或 "The final answer is: 70,000"
+            rf"[Tt]he (?:final )?answer is:?\s*({num_pattern})",
+            # "#### 18"
+            rf"####\s*({num_pattern})",
+            # "\boxed{18}"
             r"\\boxed\{([^}]+)\}",
-            r"=\s*(-?\d+(?:,\d{3})*(?:\.\d+)?)\s*$",
+            # "= 18" 在行尾
+            rf"=\s*({num_pattern})\s*\.?\s*$",
         ]
+
+    def _clean_number(self, s: str) -> str:
+        """清理数字字符串：移除$, 逗号, 空格"""
+        return s.replace("$", "").replace(",", "").replace(" ", "").strip()
 
     def extract_answer(self, text: str) -> Optional[str]:
         """提取答案"""
         for pattern in self.patterns:
             match = self.re.search(pattern, text, self.re.MULTILINE)
             if match:
-                answer = match.group(1).replace(",", "").strip()
+                answer = self._clean_number(match.group(1))
                 return answer
         return None
 
     def verify(self, response: str, gold: str) -> Dict:
         """验证答案"""
         extracted = self.extract_answer(response)
-        gold = gold.replace(",", "").strip()
+        gold = self._clean_number(gold)
 
         if extracted is None:
             return {"is_correct": False, "reward": 0.0, "extracted": None}
@@ -478,7 +494,8 @@ class JustRLTrainer:
         prompts: List[str],
         gold_answers: List[str],
         sampling_client: Any,
-    ) -> Dict[str, float]:
+        questions: Optional[List[str]] = None,  # 原始问题（用于展示）
+    ) -> Dict[str, Any]:
         """评估模型（greedy decoding，并发采样）"""
         import tinker
 
@@ -503,10 +520,12 @@ class JustRLTrainer:
             )
             futures.append(future)
 
-        # 第二步：统一等待所有结果
+        # 第二步：统一等待并收集结果
         correct = 0
-        for future, gold in zip(futures, gold_answers):
-            sample_result = future.result()  # 此时可能已经完成
+        eval_samples = []  # 保存所有样本用于人工检查
+
+        for i, (future, gold) in enumerate(zip(futures, gold_answers)):
+            sample_result = future.result()
 
             # 解码response文本
             if sample_result.sequences:
@@ -517,14 +536,98 @@ class JustRLTrainer:
                 response_text = ""
 
             result = self.verifier.verify(response_text, gold)
-            if result["is_correct"]:
+            is_correct = result["is_correct"]
+            if is_correct:
                 correct += 1
+
+            # 保存样本信息
+            eval_samples.append({
+                "index": i,
+                "question": questions[i] if questions else None,
+                "gold_answer": gold,
+                "response": response_text,
+                "extracted_answer": result.get("extracted"),
+                "is_correct": is_correct,
+            })
 
         return {
             "eval_accuracy": correct / total if total > 0 else 0,
             "eval_correct": correct,
             "eval_total": total,
+            "samples": eval_samples,  # 包含所有样本
         }
+
+
+# ============================================================
+# 样本展示辅助函数
+# ============================================================
+
+def print_eval_samples(
+    samples: List[Dict],
+    num_correct: int = 2,
+    num_incorrect: int = 2,
+    max_response_len: int = 500,
+):
+    """
+    打印评估样本供人工检查
+
+    Args:
+        samples: evaluate()返回的样本列表
+        num_correct: 展示正确样本数量
+        num_incorrect: 展示错误样本数量
+        max_response_len: response截断长度
+    """
+    correct_samples = [s for s in samples if s["is_correct"]]
+    incorrect_samples = [s for s in samples if not s["is_correct"]]
+
+    print("\n" + "-" * 60)
+    print("样本质量检查")
+    print("-" * 60)
+
+    # 展示正确样本
+    if correct_samples and num_correct > 0:
+        print(f"\n[正确样本] ({len(correct_samples)}/{len(samples)} total)")
+        for i, sample in enumerate(correct_samples[:num_correct]):
+            print(f"\n  --- 正确样本 #{i+1} ---")
+            if sample["question"]:
+                # 只显示问题的前100个字符
+                q = sample["question"][:100] + "..." if len(sample["question"]) > 100 else sample["question"]
+                print(f"  问题: {q}")
+            print(f"  标准答案: {sample['gold_answer']}")
+            print(f"  提取答案: {sample['extracted_answer']}")
+            # 截断response
+            resp = sample["response"]
+            if len(resp) > max_response_len:
+                resp = resp[:max_response_len] + f"... [截断，共{len(sample['response'])}字符]"
+            print(f"  回答:\n    {resp.replace(chr(10), chr(10) + '    ')}")
+
+    # 展示错误样本
+    if incorrect_samples and num_incorrect > 0:
+        print(f"\n[错误样本] ({len(incorrect_samples)}/{len(samples)} total)")
+        for i, sample in enumerate(incorrect_samples[:num_incorrect]):
+            print(f"\n  --- 错误样本 #{i+1} ---")
+            if sample["question"]:
+                q = sample["question"][:100] + "..." if len(sample["question"]) > 100 else sample["question"]
+                print(f"  问题: {q}")
+            print(f"  标准答案: {sample['gold_answer']}")
+            print(f"  提取答案: {sample['extracted_answer']} {'(未提取到)' if sample['extracted_answer'] is None else ''}")
+            resp = sample["response"]
+            if len(resp) > max_response_len:
+                resp = resp[:max_response_len] + f"... [截断，共{len(sample['response'])}字符]"
+            print(f"  回答:\n    {resp.replace(chr(10), chr(10) + '    ')}")
+
+    print("-" * 60 + "\n")
+
+
+def save_eval_samples(samples: List[Dict], filepath: Path, step: int):
+    """保存评估样本到JSON文件"""
+    data = {
+        "step": step,
+        "timestamp": datetime.now().isoformat(),
+        "samples": samples,
+    }
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 
 # ============================================================
@@ -664,10 +767,21 @@ def main():
         if step % config.eval_interval == 0:
             eval_prompts = [format_prompt(item["question"]) for item in eval_data]
             eval_answers = [item["answer"] for item in eval_data]
+            eval_questions = [item["question"] for item in eval_data]
 
-            eval_stats = trainer.evaluate(eval_prompts, eval_answers, sampling_client)
+            eval_stats = trainer.evaluate(
+                eval_prompts, eval_answers, sampling_client,
+                questions=eval_questions
+            )
             print(f"  [Eval] Accuracy: {eval_stats['eval_accuracy']:.2%} "
                   f"({eval_stats['eval_correct']}/{eval_stats['eval_total']})")
+
+            # 打印样本供人工检查
+            print_eval_samples(eval_stats["samples"], num_correct=1, num_incorrect=2, max_response_len = config.max_response_length)
+
+            # 保存完整样本到文件
+            samples_file = run_dir / f"eval_samples_step_{step}.json"
+            save_eval_samples(eval_stats["samples"], samples_file, step)
 
         # 保存检查点
         if step % config.save_interval == 0:
@@ -688,9 +802,19 @@ def main():
     sampling_client = training_client.save_weights_and_get_sampling_client(name="final")
     eval_prompts = [format_prompt(item["question"]) for item in eval_data]
     eval_answers = [item["answer"] for item in eval_data]
-    final_eval = trainer.evaluate(eval_prompts, eval_answers, sampling_client)
+    eval_questions = [item["question"] for item in eval_data]
+    final_eval = trainer.evaluate(
+        eval_prompts, eval_answers, sampling_client,
+        questions=eval_questions
+    )
 
     print(f"最终评估准确率: {final_eval['eval_accuracy']:.2%}")
+
+    # 打印最终样本（多展示一些）
+    print_eval_samples(final_eval["samples"], num_correct=3, num_incorrect=3, max_response_len = config.max_response_length)
+
+    # 保存最终评估样本
+    save_eval_samples(final_eval["samples"], run_dir / "eval_samples_final.json", config.num_steps)
     print(f"输出目录: {run_dir}")
     print("=" * 60)
 
