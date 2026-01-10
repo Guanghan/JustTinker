@@ -305,21 +305,27 @@ class JustRLTrainer:
         # 每个sample包含: text, tokens, logprobs, prompt_length
         all_samples = []  # List[List[Dict]]
 
-        # 批量采样（推荐）
+        # 并发采样（优化：先发送所有请求，再统一等待）
         import tinker
 
+        # 第一步：并发发送所有采样请求
+        futures = []
+        prompt_lengths = []
         for prompt in prompts:
-            # Tokenize prompt
             prompt_tokens = self.tokenizer.encode(prompt)
             prompt_length = len(prompt_tokens)
+            prompt_lengths.append(prompt_length)
             model_input = tinker.ModelInput.from_ints(prompt_tokens)
 
-            # 采样多个rollouts
             future = sampling_client.sample(
                 prompt=model_input,
                 sampling_params=sampling_params,
                 num_samples=self.config.rollout_n,
             )
+            futures.append(future)
+
+        # 第二步：统一等待并处理结果
+        for future, prompt_length in zip(futures, prompt_lengths):
             result = future.result()
 
             # 保存每个rollout的完整信息
@@ -473,7 +479,7 @@ class JustRLTrainer:
         gold_answers: List[str],
         sampling_client: Any,
     ) -> Dict[str, float]:
-        """评估模型（greedy decoding）"""
+        """评估模型（greedy decoding，并发采样）"""
         import tinker
 
         # 评估时使用greedy decoding
@@ -482,21 +488,25 @@ class JustRLTrainer:
             temperature=0.0,  # Greedy
         )
 
-        correct = 0
         total = len(prompts)
 
-        for prompt, gold in zip(prompts, gold_answers):
-            # Tokenize prompt（与train_step保持一致）
+        # 第一步：并发发送所有采样请求（非阻塞）
+        futures = []
+        for prompt in prompts:
             prompt_tokens = self.tokenizer.encode(prompt)
             model_input = tinker.ModelInput.from_ints(prompt_tokens)
 
-            # 采样（返回Future，需要调用.result()）
             future = sampling_client.sample(
                 prompt=model_input,
                 sampling_params=eval_sampling_params,
-                num_samples=1,  # 评估时生成1个样本
+                num_samples=1,
             )
-            sample_result = future.result()
+            futures.append(future)
+
+        # 第二步：统一等待所有结果
+        correct = 0
+        for future, gold in zip(futures, gold_answers):
+            sample_result = future.result()  # 此时可能已经完成
 
             # 解码response文本
             if sample_result.sequences:
