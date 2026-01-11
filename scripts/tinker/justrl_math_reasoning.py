@@ -48,14 +48,12 @@ except ImportError:
     tinker = None
     SamplingParams = None
 
-# Tinker cookbook imports (for renderer system)
+# Tinker cookbook imports (仅使用 tokenizer，不使用 renderer)
 try:
-    from tinker_cookbook import renderers as tinker_renderers
     from tinker_cookbook import tokenizer_utils as tinker_tokenizer_utils
     HAS_TINKER_COOKBOOK = True
 except ImportError:
     print("Warning: tinker_cookbook not found. Run: pip install tinker-cookbook")
-    tinker_renderers = None
     tinker_tokenizer_utils = None
     HAS_TINKER_COOKBOOK = False
 
@@ -81,12 +79,12 @@ class ReasoningConfig:
     # Qwen模型无需HuggingFace授权，Llama需要授权
     # Qwen3-4B: $0.22/M | Llama-3.2-1B: $0.09/M (需授权)
     model_name: str = "Qwen/Qwen3-4B-Instruct-2507"
-    lora_rank: int = 64
+    lora_rank: int = 128  # 必须与 SFT 训练时一致！coldstart_sft.py 使用 128
 
     # Reasoning模式设置
     reasoning_mode: bool = False  # 是否启用thinking mode
     thinking_budget: str = "medium"  # thinking token预算: low, medium, high
-    format_reward_weight: float = 0.1  # 格式奖励权重：没有thinking时的惩罚
+    format_reward_weight: float = 0  # 格式奖励权重：没有thinking时的惩罚
 
     # 训练设置（根据scale调整）
     num_steps: int = 200
@@ -129,7 +127,7 @@ class ReasoningConfig:
                 "num_steps": 500,
                 "batch_size": 32,
                 "eval_interval": 50,
-                "save_interval": 100,
+                "save_interval": 10,
                 "eval_samples": 100,
             },
             "full": {
@@ -137,7 +135,7 @@ class ReasoningConfig:
                 "batch_size": 32,
                 "eval_interval": 100,
                 "save_interval": 200,
-                "eval_samples": 200,
+                "eval_samples": 200,   # 总共 5000 测试题目
             },
         }
 
@@ -165,21 +163,31 @@ def load_math_dataset(
     split: str = "train",
     max_samples: Optional[int] = None,
     subjects: Optional[List[str]] = None,
+    stratified: bool = True,
+    seed: int = 42,
 ) -> List[Dict]:
     """
     加载MATH数据集 (EleutherAI/hendrycks_math)
 
-    MATH数据集包含7个科目：
-    - algebra (代数)
-    - counting_and_probability (组合概率)
-    - geometry (几何)
-    - intermediate_algebra (中级代数)
-    - number_theory (数论)
-    - prealgebra (预备代数)
-    - precalculus (预备微积分)
+    MATH数据集包含7个科目（测试集大小）：
+    - algebra (代数) - 1187
+    - counting_and_probability (组合概率) - 474
+    - geometry (几何) - 479
+    - intermediate_algebra (中级代数) - 903
+    - number_theory (数论) - 540
+    - prealgebra (预备代数) - 871
+    - precalculus (预备微积分) - 546
+    总计: 5000
+
+    Args:
+        split: 数据集分割 ("train" 或 "test")
+        max_samples: 最大样本数，None 表示全部
+        subjects: 指定科目列表，None 表示全部科目
+        stratified: 是否按科目比例分层采样（保持原始分布）
+        seed: 随机种子
     """
     try:
-        from datasets import load_dataset, concatenate_datasets
+        from datasets import load_dataset
     except ImportError:
         print("Error: 请安装datasets库: pip install datasets")
         sys.exit(1)
@@ -200,8 +208,9 @@ def load_math_dataset(
     # 使用指定的科目或全部科目
     target_subjects = subjects if subjects else all_subjects
 
-    # 加载各科目数据并合并
-    all_datasets = []
+    # 加载各科目数据
+    subject_data = {}
+    total_count = 0
     for subject in target_subjects:
         try:
             ds = load_dataset(
@@ -209,44 +218,68 @@ def load_math_dataset(
                 subject,
                 split=split,
             )
-            # 添加subject字段
-            ds = ds.map(lambda x: {"subject": subject, **x})
-            all_datasets.append(ds)
+            subject_data[subject] = list(ds)
+            total_count += len(ds)
             print(f"  加载 {subject}: {len(ds)} 个样本")
         except Exception as e:
             print(f"  加载 {subject} 失败: {e}")
 
-    if not all_datasets:
+    if not subject_data:
         print("所有科目加载失败，使用模拟数据...")
         return _get_mock_math_data(max_samples or 100)
 
-    # 合并所有科目
-    dataset = concatenate_datasets(all_datasets)
-    print(f"  总计: {len(dataset)} 个样本")
+    print(f"  总计: {total_count} 个样本")
 
-    # 打乱数据
-    dataset = dataset.shuffle(seed=42)
+    # 设置随机种子
+    random.seed(seed)
 
+    # 分层采样或简单采样
     samples = []
-    for item in dataset:
-        problem = item.get("problem", "")
-        solution = item.get("solution", "")
-        level = item.get("level", "unknown")
-        subject = item.get("subject", "unknown")
 
-        # 从solution中提取答案
-        answer = _extract_boxed_answer(solution)
+    if stratified and max_samples and max_samples < total_count:
+        # 分层采样：按各科目比例采样
+        print(f"  分层采样 {max_samples} 个样本（保持科目比例）...")
 
-        samples.append({
-            "problem": problem,
-            "solution": solution,
-            "answer": answer,
-            "subject": subject,
-            "level": level,
-        })
+        for subject, data in subject_data.items():
+            # 计算该科目应采样的数量（按比例）
+            subject_ratio = len(data) / total_count
+            subject_sample_count = max(1, round(max_samples * subject_ratio))
 
-        if max_samples and len(samples) >= max_samples:
-            break
+            # 打乱该科目数据
+            random.shuffle(data)
+
+            # 采样
+            sampled = data[:subject_sample_count]
+            for item in sampled:
+                samples.append({
+                    "problem": item.get("problem", ""),
+                    "solution": item.get("solution", ""),
+                    "answer": _extract_boxed_answer(item.get("solution", "")),
+                    "subject": subject,
+                    "level": item.get("level", "unknown"),
+                })
+    else:
+        # 简单采样：合并后打乱
+        all_items = []
+        for subject, data in subject_data.items():
+            for item in data:
+                all_items.append({
+                    "problem": item.get("problem", ""),
+                    "solution": item.get("solution", ""),
+                    "answer": _extract_boxed_answer(item.get("solution", "")),
+                    "subject": subject,
+                    "level": item.get("level", "unknown"),
+                })
+
+        random.shuffle(all_items)
+
+        if max_samples:
+            samples = all_items[:max_samples]
+        else:
+            samples = all_items
+
+    # 最终打乱（分层采样后各科目是连续的，需要混合）
+    random.shuffle(samples)
 
     print(f"  使用 {len(samples)} 个样本")
 
@@ -254,7 +287,15 @@ def load_math_dataset(
     subject_counts = defaultdict(int)
     for s in samples:
         subject_counts[s["subject"]] += 1
-    print("  科目分布:", dict(subject_counts))
+
+    # 计算并显示比例
+    print("  科目分布:")
+    for subject in target_subjects:
+        count = subject_counts.get(subject, 0)
+        original_count = len(subject_data.get(subject, []))
+        original_ratio = original_count / total_count * 100 if total_count > 0 else 0
+        sample_ratio = count / len(samples) * 100 if samples else 0
+        print(f"    {subject}: {count} ({sample_ratio:.1f}%) [原始: {original_ratio:.1f}%]")
 
     return samples
 
@@ -720,10 +761,10 @@ class MathReasoningVerifier:
 
 class ReasoningTrainer:
     """
-    Reasoning Model训练器
+    Reasoning Model 训练器
 
-    基于JustRL，增加对thinking tokens的支持
-    使用Tinker的renderer系统正确处理thinking mode
+    基于 JustRL，增加对 thinking tokens 的支持
+    使用 tokenizer.apply_chat_template（与 SFT 训练一致，不使用 renderer）
     """
 
     def __init__(
@@ -740,48 +781,41 @@ class ReasoningTrainer:
         self.history = defaultdict(list)
 
         self.tokenizer = None
-        self.renderer = None
-        self._init_tokenizer_and_renderer()
+        self._init_tokenizer()
 
-    def _init_tokenizer_and_renderer(self):
-        """初始化tokenizer和renderer"""
+    def _init_tokenizer(self):
+        """
+        初始化 tokenizer（不使用 renderer！）
+
+        重要：SFT 训练时使用 tokenizer.apply_chat_template，prompt 以 'assistant\\n' 结尾
+        模型学会了自己输出 <think> 作为第一个 response token
+        如果使用 renderer，会在 prompt 末尾添加 <think>，与 SFT 训练格式不一致
+        """
         model_name = self.config.model_name
-        is_qwen3 = "qwen3" in model_name.lower()
 
-        # 优先使用tinker_cookbook的tokenizer和renderer
-        if HAS_TINKER_COOKBOOK and is_qwen3:
+        # 优先使用 tinker_cookbook 的 tokenizer（但不使用 renderer）
+        if HAS_TINKER_COOKBOOK:
             try:
-                print(f"使用Tinker Cookbook加载tokenizer: {model_name}")
+                print(f"加载 tokenizer: {model_name}")
                 self.tokenizer = tinker_tokenizer_utils.get_tokenizer(model_name)
-
-                # 选择renderer: qwen3 默认启用thinking mode
-                if self.config.reasoning_mode:
-                    renderer_name = 'qwen3'  # enable_thinking=True by default
-                    print("使用 qwen3 renderer (thinking mode enabled)")
-                else:
-                    renderer_name = 'qwen3_disable_thinking'
-                    print("使用 qwen3_disable_thinking renderer")
-
-                self.renderer = tinker_renderers.get_renderer(renderer_name, self.tokenizer)
-                print("Tokenizer和Renderer加载完成")
+                print("Tokenizer 加载完成（使用 apply_chat_template，与 SFT 一致）")
                 return
             except Exception as e:
-                print(f"Warning: Tinker Cookbook加载失败: {e}")
-                print("回退到HuggingFace tokenizer...")
+                print(f"Warning: Tinker Cookbook tokenizer 加载失败: {e}")
+                print("回退到 HuggingFace tokenizer...")
 
-        # 回退到HuggingFace tokenizer
+        # 回退到 HuggingFace tokenizer
         try:
             from transformers import AutoTokenizer
-            print(f"使用HuggingFace加载tokenizer: {model_name}")
+            print(f"使用 HuggingFace 加载 tokenizer: {model_name}")
             self.tokenizer = AutoTokenizer.from_pretrained(
                 model_name,
                 trust_remote_code=True,
             )
-            self.renderer = None  # 没有renderer
-            print("Tokenizer加载完成 (无renderer)")
+            print("Tokenizer 加载完成（使用 apply_chat_template，与 SFT 一致）")
         except Exception as e:
             error_msg = str(e)
-            print(f"\nError: 无法加载tokenizer: {e}")
+            print(f"\nError: 无法加载 tokenizer: {e}")
 
             if "gated repo" in error_msg or "401" in error_msg or "restricted" in error_msg:
                 print("\n" + "=" * 60)
@@ -801,32 +835,27 @@ class ReasoningTrainer:
         """
         格式化prompt，返回ModelInput
 
-        如果有renderer，使用renderer.build_generation_prompt
-        否则回退到tokenizer.apply_chat_template
+        重要：使用与 SFT 训练完全相同的手动模板！
+        原因：
+        - SFT 训练时使用手动构建的模板字符串（见 coldstart_sft.py 第 523-528 行）
+        - tokenizer.apply_chat_template 可能产生微妙差异（空白、换行等）
+        - 模型学会了在特定格式后输出 <think> 作为第一个 response token
+        - 任何 prompt 格式差异都会导致模型无法正确输出 <think>
         """
-        # 构建消息
-        system_msg = "You are a helpful mathematical assistant. Solve problems step by step and put your final answer in \\boxed{}."
+        # 与 SFT 训练完全相同的系统消息和用户消息
+        system_msg = "You are a helpful mathematical assistant. Think step by step before answering."
         user_msg = f"Solve the following math problem.\n\nProblem: {problem}"
 
-        messages = [
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": user_msg},
-        ]
-
-        if self.renderer is not None:
-            # 使用Tinker renderer (推荐)
-            model_input = self.renderer.build_generation_prompt(messages)
-            return model_input
-        else:
-            # 回退到旧方式
-            text = format_prompt_with_tokenizer(
-                problem,
-                self.tokenizer,
-                self.config.reasoning_mode,
-                self.config.model_name,
-            )
-            tokens = self.tokenizer.encode(text)
-            return tinker.ModelInput.from_ints(tokens)
+        # 使用与 SFT 训练完全相同的手动模板（来自 coldstart_sft.py）
+        # 注意：assistant 后面只有一个换行，没有额外空格！
+        prompt_text = f"""<|im_start|>system
+{system_msg}<|im_end|>
+<|im_start|>user
+{user_msg}<|im_end|>
+<|im_start|>assistant
+"""
+        tokens = self.tokenizer.encode(prompt_text, add_special_tokens=False)
+        return tinker.ModelInput.from_ints(tokens)
 
     def get_prompt_tokens(self, problem: str) -> List[int]:
         """获取prompt的token列表"""
@@ -843,25 +872,21 @@ class ReasoningTrainer:
 
     def get_stop_sequences(self) -> List[int]:
         """
-        获取停止序列
+        获取停止序列（token IDs）
 
-        如果有renderer，使用renderer.get_stop_sequences()
-        否则回退到手动指定
+        对于 Qwen3 系列模型，使用 <|im_end|> 作为停止符
         """
-        if self.renderer is not None:
-            # 使用renderer的stop sequences (返回token IDs)
-            return self.renderer.get_stop_sequences()
+        # 获取 <|im_end|> 的 token ID
+        im_end_token = self.tokenizer.encode("<|im_end|>", add_special_tokens=False)
+        if im_end_token:
+            return [im_end_token[0]]  # 返回第一个 token（通常就是 <|im_end|>）
 
-        # 回退: base model需要手动指定
+        # 回退: base model 需要手动指定字符串
         if is_base_model(self.config.model_name):
-            # 返回字符串，让SamplingParams处理
             return [
                 "\n\nProblem:",
                 "\nProblem:",
                 "\n\n\n",
-                "<|im_end|>",
-                "<|im_start|>",
-                "<|endoftext|>",
             ]
         return []
 
@@ -869,40 +894,26 @@ class ReasoningTrainer:
         """
         解析模型响应
 
-        如果有renderer，使用renderer.parse_response来正确提取thinking块
-        否则直接decode
+        直接 decode tokens，thinking 格式检测由 MathReasoningVerifier 处理
         """
-        if self.renderer is not None:
-            # 使用renderer解析 (会正确处理<think>块)
-            parsed_message, success = self.renderer.parse_response(tokens)
-            if success and parsed_message:
-                content = parsed_message.get('content', '')
-                # 检查是否有thinking字段
-                thinking = parsed_message.get('thinking', None)
-                return {
-                    "content": content,
-                    "thinking": thinking,
-                    "full_text": f"<think>{thinking}</think>\n{content}" if thinking else content,
-                    "parse_success": success,
-                }
-            else:
-                # 解析失败，回退到直接decode
-                text = self.tokenizer.decode(tokens, skip_special_tokens=False)
-                return {
-                    "content": text,
-                    "thinking": None,
-                    "full_text": text,
-                    "parse_success": False,
-                }
-        else:
-            # 无renderer，直接decode
-            text = self.tokenizer.decode(tokens, skip_special_tokens=True)
-            return {
-                "content": text,
-                "thinking": None,
-                "full_text": text,
-                "parse_success": True,
-            }
+        text = self.tokenizer.decode(tokens, skip_special_tokens=False)
+
+        # 简单提取 thinking 内容（如果有）
+        thinking = None
+        content = text
+        if "<think>" in text and "</think>" in text:
+            import re
+            match = re.search(r"<think>(.*?)</think>", text, re.DOTALL)
+            if match:
+                thinking = match.group(1).strip()
+                content = text[match.end():].strip()
+
+        return {
+            "content": content,
+            "thinking": thinking,
+            "full_text": text,
+            "parse_success": True,
+        }
 
     def train_step(
         self,
@@ -1063,12 +1074,32 @@ class ReasoningTrainer:
         import numpy as np
         flat_rewards = [r for rewards in all_rewards for r in rewards]
 
-        # 统计 thinking 格式使用率
+        # 统计 thinking 格式使用率和长度
         thinking_count = 0
+        total_response_tokens = 0
+        total_thinking_tokens = 0
+
+        # Thinking token IDs (Qwen3)
+        think_start_id = 151667  # <think>
+        think_end_id = 151668    # </think>
+
         for samples in all_samples:
             for sample in samples:
+                tokens = sample.get("tokens", [])
+                total_response_tokens += len(tokens)
+
                 if sample.get("has_thinking", False):
                     thinking_count += 1
+                    # 计算 thinking 部分的 token 数量
+                    # 找到 <think> 和 </think> 之间的 tokens
+                    try:
+                        if think_start_id in tokens and think_end_id in tokens:
+                            start_idx = tokens.index(think_start_id)
+                            end_idx = tokens.index(think_end_id)
+                            thinking_tokens = end_idx - start_idx + 1  # 包含 <think> 和 </think>
+                            total_thinking_tokens += thinking_tokens
+                    except (ValueError, IndexError):
+                        pass
 
         stats = {
             "step": self.global_step,
@@ -1076,7 +1107,10 @@ class ReasoningTrainer:
             "accuracy": correct_count / total_count if total_count > 0 else 0,
             "thinking_rate": thinking_count / total_count if total_count > 0 else 0,
             "num_train_samples": len(train_samples),
+            "total_samples": total_count,
             "step_time": time.time() - step_start,
+            "avg_response_length": total_response_tokens / total_count if total_count > 0 else 0,
+            "avg_thinking_length": total_thinking_tokens / thinking_count if thinking_count > 0 else 0,
         }
 
         for key, value in stats.items():
@@ -1094,10 +1128,12 @@ class ReasoningTrainer:
         import tinker
 
         # 评估时也使用stop sequences
+        # 注意：使用 temperature=0.7（与 SFT 评估一致），而非 0.0
+        # 原因：temperature=0.0 (greedy) 可能导致 LoRA 权重不足以克服基座模型的先验
         stop_seqs = self.get_stop_sequences()
         eval_sampling_params = SamplingParams(
             max_tokens=self.config.max_response_length,
-            temperature=0.0,
+            temperature=0.7,  # 与 SFT 评估保持一致！
             stop=stop_seqs if stop_seqs else None,
         )
 
@@ -1349,100 +1385,62 @@ def main():
     verifier = MathReasoningVerifier(format_reward_weight=config.format_reward_weight)
 
     if args.dry_run:
-        print("\n[Dry Run Mode] 跳过Tinker API调用")
+        print("\n[Dry Run Mode] 跳过 Tinker API 调用")
 
-        is_qwen3 = "qwen3" in config.model_name.lower()
+        # 加载 tokenizer
         tokenizer = None
-        renderer = None
-
-        # 优先使用tinker_cookbook的renderer
-        if HAS_TINKER_COOKBOOK and is_qwen3:
+        if HAS_TINKER_COOKBOOK:
             try:
-                print(f"\n使用Tinker Cookbook加载: {config.model_name}")
+                print(f"\n加载 tokenizer: {config.model_name}")
                 tokenizer = tinker_tokenizer_utils.get_tokenizer(config.model_name)
-
-                if config.reasoning_mode:
-                    renderer_name = 'qwen3'  # enable_thinking=True
-                    print("使用 qwen3 renderer (thinking mode enabled)")
-                else:
-                    renderer_name = 'qwen3_disable_thinking'
-                    print("使用 qwen3_disable_thinking renderer")
-
-                renderer = tinker_renderers.get_renderer(renderer_name, tokenizer)
-                print("Tokenizer和Renderer加载完成")
+                print("Tokenizer 加载完成")
             except Exception as e:
-                print(f"Warning: Tinker Cookbook加载失败: {e}")
-                print("回退到HuggingFace tokenizer...")
+                print(f"Warning: Tinker Cookbook tokenizer 加载失败: {e}")
 
-        # 回退到HuggingFace
         if tokenizer is None:
             try:
                 from transformers import AutoTokenizer
-                print(f"\n使用HuggingFace加载tokenizer: {config.model_name}")
+                print(f"\n使用 HuggingFace 加载 tokenizer: {config.model_name}")
                 tokenizer = AutoTokenizer.from_pretrained(
                     config.model_name,
                     trust_remote_code=True,
                 )
-                print("Tokenizer加载完成 (无renderer)")
+                print("Tokenizer 加载完成")
             except Exception as e:
-                print(f"Tokenizer加载失败: {e}")
+                print(f"Tokenizer 加载失败: {e}")
                 tokenizer = None
 
-        # 测试prompt格式
+        # 测试 prompt 格式
         sample_problem = train_data[0]["problem"] if train_data else "What is 2 + 3?"
         print("\n" + "=" * 60)
-        print("示例Prompt格式")
+        print("示例 Prompt 格式（与 SFT 训练一致）")
         print("=" * 60)
         print(f"问题: {sample_problem[:100]}...")
         print("-" * 60)
 
-        # 构建消息
-        system_msg = "You are a helpful mathematical assistant. Solve problems step by step and put your final answer in \\boxed{}."
+        # 与 SFT 训练完全相同的系统消息和用户消息
+        system_msg = "You are a helpful mathematical assistant. Think step by step before answering."
         user_msg = f"Solve the following math problem.\n\nProblem: {sample_problem}"
-        messages = [
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": user_msg},
-        ]
 
-        if renderer is not None:
-            # 使用renderer构建prompt
-            model_input = renderer.build_generation_prompt(messages)
-            tokens = model_input.to_ints()
-            prompt_text = tokenizer.decode(tokens)
+        # 使用与 SFT 训练完全相同的手动模板（不使用 apply_chat_template！）
+        if tokenizer:
+            prompt_text = f"""<|im_start|>system
+{system_msg}<|im_end|>
+<|im_start|>user
+{user_msg}<|im_end|>
+<|im_start|>assistant
+"""
             print(prompt_text)
             print("-" * 60)
-            print(f"\nPrompt token数: {len(tokens)}")
-
-            # 显示stop sequences
-            stop_seqs = renderer.get_stop_sequences()
-            print(f"Stop sequences (token IDs): {stop_seqs}")
-        else:
-            # 旧方式
-            prompt = format_prompt_with_tokenizer(
-                sample_problem,
-                tokenizer,
-                config.reasoning_mode,
-                config.model_name,
-            )
-            print(prompt)
-            print("-" * 60)
-            if tokenizer:
-                tokens = tokenizer.encode(prompt)
-                print(f"\nPrompt token数: {len(tokens)}")
+            tokens = tokenizer.encode(prompt_text, add_special_tokens=False)
+            print(f"\nPrompt token 数: {len(tokens)}")
+            print(f"Prompt 末尾: {repr(prompt_text[-50:])}")
 
         print("\n注意:")
-        if renderer is not None:
-            print("  - 使用 Tinker Cookbook Renderer")
-            if config.reasoning_mode:
-                print("  - Renderer: qwen3 (enable_thinking=True)")
-                print("  - 模型将自动生成 <think>...</think> 格式")
-                print("  - 使用 renderer.parse_response() 解析输出")
-            else:
-                print("  - Renderer: qwen3_disable_thinking")
-        elif is_base_model(config.model_name):
-            print("  - 使用 Few-shot 格式 (Base Model)")
-        else:
-            print("  - 使用 HuggingFace Chat Template 格式")
+        print("  - 使用与 SFT 训练完全相同的手动模板（见 coldstart_sft.py 523-528 行）")
+        print("  - 不使用 tokenizer.apply_chat_template（可能有微妙差异）")
+        print("  - Prompt 以 'assistant\\n' 结尾，不包含 <think>")
+        print("  - 模型将根据 SFT 训练，自己输出 <think> 作为第一个 token")
         print("=" * 60)
         return
 
@@ -1454,6 +1452,7 @@ def main():
     training_client = service_client.create_lora_training_client(
         base_model=config.model_name,
         rank=config.lora_rank,
+        train_unembed=True,  # 必须与 SFT 训练时一致！
     )
     print("模型加载完成")
 
@@ -1494,11 +1493,12 @@ def main():
             f"Reward: {stats['mean_reward']:.3f}",
             f"Acc: {stats['accuracy']:.2%}",
         ]
-        # 在 reasoning 模式下显示 thinking rate
+        # 在 reasoning 模式下显示 thinking rate 和长度
         if config.reasoning_mode:
             output_parts.append(f"Think: {stats['thinking_rate']:.0%}")
+            output_parts.append(f"Len: {stats['avg_thinking_length']:.0f}/{stats['avg_response_length']:.0f}")
         output_parts.extend([
-            f"Train: {stats['num_train_samples']}",
+            f"Train: {stats['num_train_samples']}/{stats['total_samples']}",
             f"Time: {stats['step_time']:.1f}s",
         ])
         print(" | ".join(output_parts))
