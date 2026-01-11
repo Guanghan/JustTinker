@@ -5,6 +5,8 @@ JustRL数学推理训练 - Tinker平台
 基于论文 "JustRL: Simplicity at Scale" 的简化RLVR训练实现
 使用Tinker API进行LoRA微调
 
+在GSM8K上进行初步验证。
+
 核心原则（来自JustRL）：
 - 单阶段训练，固定超参数
 - 无KL惩罚，无长度惩罚

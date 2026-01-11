@@ -570,16 +570,43 @@ class MathReasoningVerifier:
             return ""
 
         answer = answer.strip()
-        # 移除常见的包装
-        answer = answer.replace("$", "")
+
+        # 1. 处理 \text{...} - 保留内容，移除包装
+        answer = self.re.sub(r"\\text\s*\{([^}]*)\}", r"\1", answer)
+        answer = self.re.sub(r"\\mathrm\s*\{([^}]*)\}", r"\1", answer)
+        answer = self.re.sub(r"\\textbf\s*\{([^}]*)\}", r"\1", answer)
+
+        # 2. 处理货币符号
+        answer = answer.replace("\\$", "")  # LaTeX 转义的美元符号
+        answer = answer.replace("$", "")     # 普通美元符号
+
+        # 3. 处理百分号
+        answer = answer.replace("\\%", "%")  # 统一为普通百分号
+
+        # 4. 处理度数符号
+        answer = answer.replace("^\\circ", "°")
+        answer = answer.replace("^{\\circ}", "°")
+        answer = answer.replace("\\circ", "°")
+        answer = answer.replace("degrees", "°")
+
+        # 5. 移除逗号和空格
         answer = answer.replace(",", "")
         answer = answer.replace(" ", "")
-        # 统一分数格式
+
+        # 6. 统一分数格式
         answer = answer.replace("\\frac", "frac")
         answer = answer.replace("\\dfrac", "frac")
-        # 统一其他LaTeX
+        answer = answer.replace("\\tfrac", "frac")
+
+        # 7. 统一其他 LaTeX 符号
         answer = answer.replace("\\pi", "pi")
         answer = answer.replace("\\sqrt", "sqrt")
+        answer = answer.replace("\\cdot", "*")
+        answer = answer.replace("\\times", "*")
+        answer = answer.replace("\\div", "/")
+        answer = answer.replace("\\left", "")
+        answer = answer.replace("\\right", "")
+
         answer = answer.lower()
 
         return answer
