@@ -11,21 +11,21 @@
 #
 # 使用方法:
 #   # 前台运行 (简单测试)
-#   ./scripts/run_justrl_reasoning.sh quick --foreground
+#   ./scripts/launchers/run_justrl_reasoning.sh quick --foreground
 #
 #   # 后台运行 - 标准模式
-#   ./scripts/run_justrl_reasoning.sh quick
-#   ./scripts/run_justrl_reasoning.sh medium
+#   ./scripts/launchers/run_justrl_reasoning.sh quick
+#   ./scripts/launchers/run_justrl_reasoning.sh medium
 #
 #   # 后台运行 - Reasoning模式 (推荐)
-#   ./scripts/run_justrl_reasoning.sh quick --reasoning
-#   ./scripts/run_justrl_reasoning.sh medium --reasoning
+#   ./scripts/launchers/run_justrl_reasoning.sh quick --reasoning
+#   ./scripts/launchers/run_justrl_reasoning.sh medium --reasoning
 #
 #   # 从 SFT checkpoint 继续 RLVR 训练 (Two-Stage)
-#   ./scripts/run_justrl_reasoning.sh medium --reasoning --checkpoint coldstart_sft_final
+#   ./scripts/launchers/run_justrl_reasoning.sh medium --reasoning --checkpoint coldstart_sft_final
 #
 #   # 停止训练
-#   ./scripts/stop_justrl_reasoning.sh
+#   ./scripts/launchers/stop_justrl_reasoning.sh
 #
 #   # 查看日志
 #   tail -f logs/justrl_reasoning_*.log
@@ -41,8 +41,8 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# 项目根目录
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# 项目根目录 (从 scripts/launchers/ 往上两级)
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
 cd "$PROJECT_ROOT"
 
 # 默认参数
@@ -178,7 +178,7 @@ else
     echo "  日志: $LOG_FILE"
     echo ""
     echo "查看实时日志: tail -f $LOG_FILE"
-    echo "停止训练: ./scripts/stop_justrl_reasoning.sh"
+    echo "停止训练: ./scripts/launchers/stop_justrl_reasoning.sh"
     echo "检查进程: ps -p $PID"
     echo ""
 

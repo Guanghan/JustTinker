@@ -10,15 +10,15 @@
 #
 # 使用方法:
 #   # 前台运行 (简单，适合快速测试)
-#   ./scripts/run_justrl.sh quick --foreground
+#   ./scripts/launchers/run_justrl.sh quick --foreground
 #
 #   # 后台运行 (推荐，适合长时间训练)
-#   ./scripts/run_justrl.sh quick
-#   ./scripts/run_justrl.sh medium
-#   ./scripts/run_justrl.sh full
+#   ./scripts/launchers/run_justrl.sh quick
+#   ./scripts/launchers/run_justrl.sh medium
+#   ./scripts/launchers/run_justrl.sh full
 #
 #   # 停止后台任务
-#   ./scripts/stop_justrl.sh
+#   ./scripts/launchers/stop_justrl.sh
 #
 #   # 查看日志
 #   tail -f logs/justrl_quick_*.log
@@ -33,8 +33,8 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# 项目根目录
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# 项目根目录 (从 scripts/launchers/ 往上两级)
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
 cd "$PROJECT_ROOT"
 
 # 解析参数

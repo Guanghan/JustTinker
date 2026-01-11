@@ -3,7 +3,7 @@
 # 停止 Cold Start SFT 后台训练
 #
 # 使用方法:
-#   ./scripts/stop_coldstart_sft.sh
+#   ./scripts/launchers/stop_coldstart_sft.sh
 #
 ###############################################################################
 
@@ -16,8 +16,8 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# 项目根目录
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# 项目根目录 (从 scripts/launchers/ 往上两级)
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
 cd "$PROJECT_ROOT"
 
 PID_FILE="logs/coldstart_sft.pid"
