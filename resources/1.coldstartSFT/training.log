@@ -1,0 +1,241 @@
+============================================================
+Cold Start SFT - Thinking Mode Training
+============================================================
+Scale: small
+Model: Qwen/Qwen3-4B-Instruct-2507
+Dataset: OpenR1-Math-220k (default)
+Max samples: 10000
+Max seq length: 8192 (超长样本将被过滤)
+Steps: 800
+Batch size: 8 x 2 = 16
+Learning rate: 2e-05
+Output: outputs/coldstart_sft/coldstart_sft_small_20260110_205110
+============================================================
+
+预估 Token 消耗: 104.9M tokens
+预估成本: ~$46
+============================================================
+
+加载 tokenizer 用于数据过滤...
+  Tokenizer 加载成功: Qwen/Qwen3-4B-Instruct-2507
+加载 OpenR1-Math-220k (default)...
+  原始数据: 93733 个问题
+  启用长度过滤: max_seq_length=8192
+  有效样本: 10000
+  跳过（无 thinking 格式）: 21
+  跳过（超过 8192 tokens）: 3154
+  训练集: 9000, 评估集: 1000
+  数据来源分布: {'olympiads': 6716, 'cn_contest': 1150, 'aops_forum': 634, 'amc_aime': 374, 'inequalities': 57, 'number_theory': 34, 'olympiads_ref': 35}
+
+正在连接 Tinker 服务...
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
+To disable this warning, you can either:
+	- Avoid using `tokenizers` before the fork if possible
+	- Explicitly set the environment variable TOKENIZERS_PARALLELISM=(true | false)
+正在加载模型: Qwen/Qwen3-4B-Instruct-2507
+模型加载完成
+使用 Tinker Cookbook 加载 tokenizer: Qwen/Qwen3-4B-Instruct-2507
+Tokenizer 和 Renderer 加载完成 (thinking mode)
+
+验证训练数据格式...
+  检查前 100 个样本: 100 个有效, 0 个无效
+
+开始训练...
+------------------------------------------------------------
+Step 10/800 | Loss: 0.8584 | LR: 4.00e-06 | Time: 2.2s
+Step 20/800 | Loss: 0.8636 | LR: 8.00e-06 | Time: 2.2s
+Step 30/800 | Loss: 0.7195 | LR: 1.20e-05 | Time: 2.1s
+Step 40/800 | Loss: 0.5809 | LR: 1.60e-05 | Time: 2.2s
+Step 50/800 | Loss: 0.4824 | LR: 2.00e-05 | Time: 2.1s
+  [Eval] Thinking Rate: 0.0% | Boxed Rate: 36.7%
+  [Sample] has_thinking=False, has_boxed=False
+    Response: Let's think about the problem step by step:
+
+1. When we expand $(4x^3 + x^{-3} + 2)^{2016}$, each term in the expansion will be of the form $a \cdot x^b$, where $a$ is a coefficient and $b$ is an expo...
+Step 60/800 | Loss: 0.4700 | LR: 2.00e-05 | Time: 2.4s
+Step 70/800 | Loss: 0.3903 | LR: 2.00e-05 | Time: 2.2s
+Step 80/800 | Loss: 0.3622 | LR: 2.00e-05 | Time: 2.3s
+Step 90/800 | Loss: 0.3672 | LR: 2.00e-05 | Time: 2.4s
+Step 100/800 | Loss: 0.4028 | LR: 2.00e-05 | Time: 2.2s
+  [Eval] Thinking Rate: 0.0% | Boxed Rate: 50.0%
+  [Sample] has_thinking=False, has_boxed=True
+    Response: <|im_start|>
+Okay, so I need to figure out how many terms there will be when we expand \((4x^3 + x^{-3} + 2)^{2016}\) and combine like terms. Hmm, let me think step by step. 
+
+First, I remember that w...
+  [Save] Checkpoint: checkpoint_step_100
+Step 110/800 | Loss: 0.3446 | LR: 2.00e-05 | Time: 2.3s
+Step 120/800 | Loss: 0.3899 | LR: 2.00e-05 | Time: 2.4s
+Step 130/800 | Loss: 0.3885 | LR: 2.00e-05 | Time: 2.4s
+Step 140/800 | Loss: 0.3700 | LR: 2.00e-05 | Time: 2.4s
+Step 150/800 | Loss: 0.3336 | LR: 2.00e-05 | Time: 2.5s
+  [Eval] Thinking Rate: 0.0% | Boxed Rate: 53.3%
+  [Sample] has_thinking=False, has_boxed=True
+    Response: <tool_call>
+Alright, let me try to figure out how many terms there will be when expanding \((4x^3 + x^{-3} + 2)^{2016}\) and combining like terms. Hmm, okay, so I need to think about expanding a trino...
+Step 160/800 | Loss: 0.3572 | LR: 2.00e-05 | Time: 2.6s
+Step 170/800 | Loss: 0.3668 | LR: 2.00e-05 | Time: 2.2s
+Step 180/800 | Loss: 0.4185 | LR: 2.00e-05 | Time: 2.4s
+Step 190/800 | Loss: 0.3833 | LR: 2.00e-05 | Time: 2.4s
+Step 200/800 | Loss: 0.3546 | LR: 2.00e-05 | Time: 2.3s
+  [Eval] Thinking Rate: 0.0% | Boxed Rate: 76.7%
+  [Sample] has_thinking=False, has_boxed=True
+    Response: มนุษย์
+Okay, so I need to figure out how many distinct terms there will be when expanding (4x³ + x⁻³ + 2)²⁰¹⁶ and combining like terms. Hmm, let's start by understanding the problem. 
+
+First, when you...
+  [Save] Checkpoint: checkpoint_step_200
+Step 210/800 | Loss: 0.3679 | LR: 2.00e-05 | Time: 2.3s
+Step 220/800 | Loss: 0.3639 | LR: 2.00e-05 | Time: 2.3s
+Step 230/800 | Loss: 0.3862 | LR: 2.00e-05 | Time: 2.4s
+Step 240/800 | Loss: 0.4111 | LR: 2.00e-05 | Time: 2.4s
+Step 250/800 | Loss: 0.3241 | LR: 2.00e-05 | Time: 2.3s
+  [Eval] Thinking Rate: 33.3% | Boxed Rate: 70.0%
+  [Sample] has_thinking=False, has_boxed=False
+    Response: <think>
+Okay, so I need to figure out how many terms there will be after expanding the expression (4x³ + x⁻³ + 2)^2016 and combining like terms. Hmm, let's start by understanding what's going on here....
+Step 260/800 | Loss: 0.3554 | LR: 2.00e-05 | Time: 2.4s
+Step 270/800 | Loss: 0.3330 | LR: 2.00e-05 | Time: 2.3s
+Step 280/800 | Loss: 0.3673 | LR: 2.00e-05 | Time: 2.3s
+Step 290/800 | Loss: 0.3272 | LR: 2.00e-05 | Time: 2.3s
+Step 300/800 | Loss: 0.3510 | LR: 2.00e-05 | Time: 2.5s
+  [Eval] Thinking Rate: 46.7% | Boxed Rate: 83.3%
+  [Sample] has_thinking=True, has_boxed=True
+    Response: <think>
+Alright, so I need to figure out how many terms there will be when expanding (4x³ + x⁻³ + 2)^2016 and combining like terms. Hmm, let me start by recalling some basics about polynomial expansio...
+  [Save] Checkpoint: checkpoint_step_300
+Step 310/800 | Loss: 0.3550 | LR: 2.00e-05 | Time: 2.4s
+Step 320/800 | Loss: 0.3354 | LR: 2.00e-05 | Time: 2.2s
+Step 330/800 | Loss: 0.3599 | LR: 2.00e-05 | Time: 2.2s
+Step 340/800 | Loss: 0.3304 | LR: 2.00e-05 | Time: 2.3s
+Step 350/800 | Loss: 0.3556 | LR: 2.00e-05 | Time: 2.1s
+  [Eval] Thinking Rate: 53.3% | Boxed Rate: 76.7%
+  [Sample] has_thinking=True, has_boxed=True
+    Response: <think>
+Okay, so I need to figure out how many distinct terms there will be when expanding (4x³ + x⁻³ + 2)²⁰¹⁶ and combining like terms. Hmm, let's start by understanding the problem. 
+
+First, when yo...
+Step 360/800 | Loss: 0.3335 | LR: 2.00e-05 | Time: 2.3s
+Step 370/800 | Loss: 0.3083 | LR: 2.00e-05 | Time: 2.3s
+Step 380/800 | Loss: 0.3118 | LR: 2.00e-05 | Time: 2.3s
+Step 390/800 | Loss: 0.3516 | LR: 2.00e-05 | Time: 2.3s
+Step 400/800 | Loss: 0.3442 | LR: 2.00e-05 | Time: 2.5s
+  [Eval] Thinking Rate: 66.7% | Boxed Rate: 83.3%
+  [Sample] has_thinking=False, has_boxed=True
+    Response: </think>ant
+Okay, so I need to figure out how many terms there will be when expanding the expression (4x³ + x⁻³ + 2)^2016 and combining like terms. Hmm, let me start by recalling how to expand express...
+  [Save] Checkpoint: checkpoint_step_400
+Step 410/800 | Loss: 0.3869 | LR: 2.00e-05 | Time: 2.4s
+Step 420/800 | Loss: 0.3123 | LR: 2.00e-05 | Time: 2.3s
+Step 430/800 | Loss: 0.3362 | LR: 2.00e-05 | Time: 2.3s
+Step 440/800 | Loss: 0.3754 | LR: 2.00e-05 | Time: 2.3s
+Step 450/800 | Loss: 0.3383 | LR: 2.00e-05 | Time: 2.3s
+  [Eval] Thinking Rate: 70.0% | Boxed Rate: 83.3%
+  [Sample] has_thinking=True, has_boxed=True
+    Response: <think>
+Okay, let's see. The problem is asking how many terms there will be when expanding \((4x^3 + x^{-3} + 2)^{2016}\) and combining like terms. Hmm, I need to figure out the number of distinct ter...
+Step 460/800 | Loss: 0.4234 | LR: 2.00e-05 | Time: 2.4s
+Step 470/800 | Loss: 0.3479 | LR: 2.00e-05 | Time: 2.3s
+Step 480/800 | Loss: 0.3869 | LR: 2.00e-05 | Time: 2.4s
+Step 490/800 | Loss: 0.3540 | LR: 2.00e-05 | Time: 2.2s
+Step 500/800 | Loss: 0.3343 | LR: 2.00e-05 | Time: 2.1s
+  [Eval] Thinking Rate: 80.0% | Boxed Rate: 83.3%
+  [Sample] has_thinking=True, has_boxed=True
+    Response: <think>
+Okay, so I need to figure out how many terms there will be when expanding the expression (4x³ + x⁻³ + 2)²⁰¹⁶ and then combining like terms. Hmm, let's start by understanding what this expansio...
+  [Save] Checkpoint: checkpoint_step_500
+Step 510/800 | Loss: 0.3775 | LR: 2.00e-05 | Time: 2.4s
+Step 520/800 | Loss: 0.4091 | LR: 2.00e-05 | Time: 2.4s
+Step 530/800 | Loss: 0.3403 | LR: 2.00e-05 | Time: 2.3s
+Step 540/800 | Loss: 0.3370 | LR: 2.00e-05 | Time: 2.3s
+Step 550/800 | Loss: 0.3719 | LR: 2.00e-05 | Time: 2.3s
+  [Eval] Thinking Rate: 80.0% | Boxed Rate: 83.3%
+  [Sample] has_thinking=True, has_boxed=True
+    Response: <think>
+Okay, so I need to figure out how many distinct terms there are when expanding (4x³ + x⁻³ + 2)^2016 and combining like terms. Hmm, let's start by understanding what this expression looks like ...
+Step 560/800 | Loss: 0.3638 | LR: 2.00e-05 | Time: 2.3s
+Step 570/800 | Loss: 0.3941 | LR: 2.00e-05 | Time: 2.4s
+Step 580/800 | Loss: 0.3312 | LR: 2.00e-05 | Time: 2.4s
+Step 590/800 | Loss: 0.3588 | LR: 2.00e-05 | Time: 2.3s
+Step 600/800 | Loss: 0.3613 | LR: 2.00e-05 | Time: 2.1s
+  [Eval] Thinking Rate: 80.0% | Boxed Rate: 86.7%
+  [Sample] has_thinking=True, has_boxed=True
+    Response: <think>
+Okay, let me try to figure out how many terms there will be when expanding the expression (4x³ + x⁻³ + 2)²⁰¹⁶ and combining like terms. Hmm, so this is a multinomial expansion problem. I remem...
+  [Save] Checkpoint: checkpoint_step_600
+Step 610/800 | Loss: 0.3500 | LR: 2.00e-05 | Time: 2.2s
+Step 620/800 | Loss: 0.3476 | LR: 2.00e-05 | Time: 2.2s
+Step 630/800 | Loss: 0.3578 | LR: 2.00e-05 | Time: 2.3s
+Step 640/800 | Loss: 0.3320 | LR: 2.00e-05 | Time: 2.2s
+Step 650/800 | Loss: 0.2943 | LR: 2.00e-05 | Time: 2.3s
+  [Eval] Thinking Rate: 80.0% | Boxed Rate: 83.3%
+  [Sample] has_thinking=True, has_boxed=True
+    Response: <think>
+Okay, so I need to figure out how many terms there will be when expanding the expression (4x³ + x⁻³ + 2)²⁰¹⁶ and combining like terms. Hmm, let's start by understanding what the problem is ask...
+Step 660/800 | Loss: 0.3891 | LR: 2.00e-05 | Time: 2.7s
+Step 670/800 | Loss: 0.3621 | LR: 2.00e-05 | Time: 2.3s
+Step 680/800 | Loss: 0.3073 | LR: 2.00e-05 | Time: 2.2s
+Step 690/800 | Loss: 0.3328 | LR: 2.00e-05 | Time: 2.2s
+Step 700/800 | Loss: 0.3281 | LR: 2.00e-05 | Time: 2.3s
+  [Eval] Thinking Rate: 76.7% | Boxed Rate: 76.7%
+  [Sample] has_thinking=True, has_boxed=True
+    Response: <think>
+Okay, so I need to figure out how many terms there will be after expanding the expression \((4x^3 + x^{-3} + 2)^{2016}\) and combining like terms. Hmm, let's start by understanding the problem...
+  [Save] Checkpoint: checkpoint_step_700
+Step 710/800 | Loss: 0.3172 | LR: 2.00e-05 | Time: 2.3s
+Step 720/800 | Loss: 0.3907 | LR: 2.00e-05 | Time: 2.3s
+Step 730/800 | Loss: 0.3542 | LR: 2.00e-05 | Time: 2.1s
+Step 740/800 | Loss: 0.3502 | LR: 2.00e-05 | Time: 2.3s
+Step 750/800 | Loss: 0.3077 | LR: 2.00e-05 | Time: 2.2s
+  [Eval] Thinking Rate: 76.7% | Boxed Rate: 83.3%
+  [Sample] has_thinking=True, has_boxed=True
+    Response: <think>
+Okay, so I need to figure out how many terms there will be when expanding \((4x^3 + x^{-3} + 2)^{2016}\) and combining like terms. Hmm, let me start by recalling some basics about expanding ex...
+Step 760/800 | Loss: 0.3546 | LR: 2.00e-05 | Time: 2.3s
+Step 770/800 | Loss: 0.3511 | LR: 2.00e-05 | Time: 2.4s
+Step 780/800 | Loss: 0.3457 | LR: 2.00e-05 | Time: 2.4s
+Step 790/800 | Loss: 0.3635 | LR: 2.00e-05 | Time: 2.3s
+Step 800/800 | Loss: 0.3293 | LR: 2.00e-05 | Time: 2.3s
+  [Eval] Thinking Rate: 66.7% | Boxed Rate: 73.3%
+  [Sample] has_thinking=True, has_boxed=True
+    Response: <think>
+Okay, let's see. I need to figure out how many terms will be there when expanding the expression (4x³ + x⁻³ + 2)^2016 and combining like terms. Hmm, expanding such a high power... that seems r...
+  [Save] Checkpoint: checkpoint_step_800
+
+============================================================
+训练完成!
+最终模型保存为: coldstart_sft_final
+
+最终评估:
+  Thinking Rate: 70.0%
+  Boxed Rate: 80.0%
+
+样本检查:
+
+  样本 1:
+    问题: 2.1. How many terms will there be if we expand the expression $\left(4 x^{3}+x^{...
+    has_thinking: True, has_boxed: True
+    回答: <think>
+Okay, let's see. I need to figure out how many terms there will be when we expand (4x³ + x⁻³ + 2)²⁰¹⁶ and combine like terms. Hmm, expanding such a high exponent might be complicated, but maybe there's a pattern or formula I can use instead of multiplying everything out.
+
+First, let me recal...
+
+  样本 2:
+    问题: A cube has eight vertices (corners) and twelve edges.  A segment, such as $x$, w...
+    has_thinking: True, has_boxed: True
+    回答: <think>
+Okay, so I need to figure out how many diagonals a cube has. Let me start by understanding the problem again. A cube has eight vertices, twelve edges, and each diagonal is a segment that connects two vertices that aren't connected by an edge. The problem gives an example of two diagonals, x ...
+
+  样本 3:
+    问题: 1. Let $-1<a<0, \theta=\arcsin a$, then the solution set of the inequality $\sin...
+    has_thinking: False, has_boxed: False
+    回答: <think>
+Okay, let's try to figure out this problem step by step. The question is about solving the inequality sin x < a, where a is between -1 and 0, and θ is defined as arcsin a. The answer choices are intervals involving θ and multiples of π, so I need to analyze how the sine function behaves in d...
+
+输出目录: outputs/coldstart_sft/coldstart_sft_small_20260110_205110
+后续 RLVR 训练请使用 checkpoint: coldstart_sft_final
+============================================================
