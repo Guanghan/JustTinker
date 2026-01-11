@@ -17,11 +17,13 @@
 
 输出内容:
 
-    完整版（默认）：生成 4 个子图的 PNG + PDF
+    完整版（默认）：生成 6 个子图的 PNG + PDF
     - Training Accuracy 曲线
     - Mean Reward 曲线
     - Positive Samples 柱状图
     - Step Time 曲线
+    - Thinking Rate 曲线
+    - Response Length 曲线（总长度 + Thinking 长度）
 
     简洁版（--simple）：只有 Accuracy 曲线
 
@@ -76,13 +78,16 @@ def plot_training_curves(history: dict, output_path: Path, title_prefix: str = "
     mean_reward = history.get("mean_reward", [])
     num_train_samples = history.get("num_train_samples", [])
     step_time = history.get("step_time", [])
+    thinking_rate = history.get("thinking_rate", [])
+    avg_response_length = history.get("avg_response_length", [])
+    avg_thinking_length = history.get("avg_thinking_length", [])
 
     if not steps:
         print("Warning: 历史数据为空")
         return
 
-    # 创建图表
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    # 创建图表 (3x2 = 6 个子图)
+    fig, axes = plt.subplots(3, 2, figsize=(14, 14))
     fig.suptitle(f"{title_prefix}JustRL Training Progress", fontsize=14, fontweight='bold')
 
     # 1. Accuracy曲线
@@ -145,6 +150,48 @@ def plot_training_curves(history: dict, output_path: Path, title_prefix: str = "
         avg_time = sum(step_time) / len(step_time)
         ax4.axhline(y=avg_time, color='r', linestyle='--', alpha=0.5, label=f'Avg: {avg_time:.1f}s')
         ax4.legend()
+
+    # 5. Thinking Rate
+    ax5 = axes[2, 0]
+    if thinking_rate:
+        ax5.plot(steps, thinking_rate, 'purple', linewidth=1.5, label='Thinking Rate')
+        ax5.fill_between(steps, thinking_rate, alpha=0.3, color='purple')
+        ax5.set_xlabel('Step')
+        ax5.set_ylabel('Rate')
+        ax5.set_title('Thinking Token Usage Rate')
+        ax5.set_ylim(0, 1)
+        ax5.grid(True, alpha=0.3)
+        ax5.legend()
+
+        if len(thinking_rate) > 0:
+            ax5.annotate(f'{thinking_rate[-1]:.0%}',
+                        xy=(steps[-1], thinking_rate[-1]),
+                        xytext=(5, 5), textcoords='offset points',
+                        fontsize=10, color='purple')
+
+    # 6. Response Length (avg total + avg thinking)
+    ax6 = axes[2, 1]
+    if avg_response_length:
+        ax6.plot(steps, avg_response_length, 'steelblue', linewidth=1.5, label='Avg Response Length')
+        if avg_thinking_length:
+            ax6.plot(steps, avg_thinking_length, 'coral', linewidth=1.5, label='Avg Thinking Length')
+        ax6.set_xlabel('Step')
+        ax6.set_ylabel('Tokens')
+        ax6.set_title('Average Response & Thinking Length')
+        ax6.grid(True, alpha=0.3)
+        ax6.legend()
+
+        # 添加最终值标注
+        if len(avg_response_length) > 0:
+            ax6.annotate(f'{avg_response_length[-1]:.0f}',
+                        xy=(steps[-1], avg_response_length[-1]),
+                        xytext=(5, 5), textcoords='offset points',
+                        fontsize=9, color='steelblue')
+        if avg_thinking_length and len(avg_thinking_length) > 0:
+            ax6.annotate(f'{avg_thinking_length[-1]:.0f}',
+                        xy=(steps[-1], avg_thinking_length[-1]),
+                        xytext=(5, -15), textcoords='offset points',
+                        fontsize=9, color='coral')
 
     plt.tight_layout()
 
@@ -210,6 +257,9 @@ def print_summary(history: dict):
     accuracy = history.get("accuracy", [])
     mean_reward = history.get("mean_reward", [])
     step_time = history.get("step_time", [])
+    thinking_rate = history.get("thinking_rate", [])
+    avg_response_length = history.get("avg_response_length", [])
+    avg_thinking_length = history.get("avg_thinking_length", [])
 
     print("\n" + "=" * 50)
     print("训练摘要")
@@ -226,6 +276,18 @@ def print_summary(history: dict):
 
     if mean_reward:
         print(f"平均奖励: {sum(mean_reward)/len(mean_reward):.3f}")
+
+    if thinking_rate:
+        print(f"初始 Thinking Rate: {thinking_rate[0]:.0%}")
+        print(f"最终 Thinking Rate: {thinking_rate[-1]:.0%}")
+
+    if avg_response_length:
+        print(f"平均响应长度: {sum(avg_response_length)/len(avg_response_length):.0f} tokens")
+
+    if avg_thinking_length:
+        valid_lengths = [l for l in avg_thinking_length if l > 0]
+        if valid_lengths:
+            print(f"平均 Thinking 长度: {sum(valid_lengths)/len(valid_lengths):.0f} tokens")
 
     if step_time:
         total_time = sum(step_time)
