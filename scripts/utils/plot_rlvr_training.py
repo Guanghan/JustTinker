@@ -38,7 +38,8 @@ from datetime import datetime
 
 def find_latest_history() -> Path:
     """查找最新的history.json文件"""
-    output_dir = Path("outputs/justrl")
+    #output_dir = Path("outputs/justrl")
+    output_dir = Path("outputs/justrl_reasoning")
     if not output_dir.exists():
         raise FileNotFoundError(f"输出目录不存在: {output_dir}")
 
@@ -81,6 +82,10 @@ def plot_training_curves(history: dict, output_path: Path, title_prefix: str = "
     thinking_rate = history.get("thinking_rate", [])
     avg_response_length = history.get("avg_response_length", [])
     avg_thinking_length = history.get("avg_thinking_length", [])
+    # Eval 数据
+    eval_steps = history.get("eval_step", [])
+    eval_accuracy = history.get("eval_accuracy", [])
+    eval_thinking_rate = history.get("eval_thinking_rate", [])
 
     if not steps:
         print("Warning: 历史数据为空")
@@ -90,14 +95,22 @@ def plot_training_curves(history: dict, output_path: Path, title_prefix: str = "
     fig, axes = plt.subplots(3, 2, figsize=(14, 14))
     fig.suptitle(f"{title_prefix}JustRL Training Progress", fontsize=14, fontweight='bold')
 
-    # 1. Accuracy曲线
+    # 1. Accuracy曲线 (Train + Eval)
     ax1 = axes[0, 0]
     if accuracy:
-        ax1.plot(steps, accuracy, 'b-', linewidth=1.5, label='Train Accuracy')
-        ax1.fill_between(steps, accuracy, alpha=0.3)
+        ax1.plot(steps, accuracy, 'b-', linewidth=1.5, alpha=0.7, label='Train Accuracy')
+        ax1.fill_between(steps, accuracy, alpha=0.2, color='blue')
+        # Eval accuracy (如果有)
+        if eval_steps and eval_accuracy:
+            ax1.plot(eval_steps, eval_accuracy, 'r-o', linewidth=2, markersize=4, label='Eval Accuracy')
+            if len(eval_accuracy) > 0:
+                ax1.annotate(f'{eval_accuracy[-1]:.2%}',
+                            xy=(eval_steps[-1], eval_accuracy[-1]),
+                            xytext=(5, -15), textcoords='offset points',
+                            fontsize=10, color='red')
         ax1.set_xlabel('Step')
         ax1.set_ylabel('Accuracy')
-        ax1.set_title('Training Accuracy')
+        ax1.set_title('Training & Eval Accuracy')
         ax1.set_ylim(0, 1)
         ax1.grid(True, alpha=0.3)
         ax1.legend()
@@ -151,11 +164,19 @@ def plot_training_curves(history: dict, output_path: Path, title_prefix: str = "
         ax4.axhline(y=avg_time, color='r', linestyle='--', alpha=0.5, label=f'Avg: {avg_time:.1f}s')
         ax4.legend()
 
-    # 5. Thinking Rate
+    # 5. Thinking Rate (Train + Eval)
     ax5 = axes[2, 0]
     if thinking_rate:
-        ax5.plot(steps, thinking_rate, 'purple', linewidth=1.5, label='Thinking Rate')
-        ax5.fill_between(steps, thinking_rate, alpha=0.3, color='purple')
+        ax5.plot(steps, thinking_rate, 'purple', linewidth=1.5, alpha=0.7, label='Train Think Rate')
+        ax5.fill_between(steps, thinking_rate, alpha=0.2, color='purple')
+        # Eval thinking rate (如果有)
+        if eval_steps and eval_thinking_rate:
+            ax5.plot(eval_steps, eval_thinking_rate, 'orange', linewidth=2, marker='o', markersize=4, label='Eval Think Rate')
+            if len(eval_thinking_rate) > 0:
+                ax5.annotate(f'{eval_thinking_rate[-1]:.0%}',
+                            xy=(eval_steps[-1], eval_thinking_rate[-1]),
+                            xytext=(5, -15), textcoords='offset points',
+                            fontsize=10, color='orange')
         ax5.set_xlabel('Step')
         ax5.set_ylabel('Rate')
         ax5.set_title('Thinking Token Usage Rate')
@@ -260,6 +281,10 @@ def print_summary(history: dict):
     thinking_rate = history.get("thinking_rate", [])
     avg_response_length = history.get("avg_response_length", [])
     avg_thinking_length = history.get("avg_thinking_length", [])
+    # Eval 数据
+    eval_steps = history.get("eval_step", [])
+    eval_accuracy = history.get("eval_accuracy", [])
+    eval_thinking_rate = history.get("eval_thinking_rate", [])
 
     print("\n" + "=" * 50)
     print("训练摘要")
@@ -269,13 +294,20 @@ def print_summary(history: dict):
         print(f"总步数: {len(steps)}")
 
     if accuracy:
-        print(f"初始准确率: {accuracy[0]:.2%}")
-        print(f"最终准确率: {accuracy[-1]:.2%}")
-        print(f"最高准确率: {max(accuracy):.2%} (Step {steps[accuracy.index(max(accuracy))]})")
-        print(f"准确率提升: {accuracy[-1] - accuracy[0]:+.2%}")
+        print(f"初始 Train 准确率: {accuracy[0]:.2%}")
+        print(f"最终 Train 准确率: {accuracy[-1]:.2%}")
+        print(f"最高 Train 准确率: {max(accuracy):.2%} (Step {steps[accuracy.index(max(accuracy))]})")
+        print(f"Train 准确率提升: {accuracy[-1] - accuracy[0]:+.2%}")
+
+    if eval_accuracy:
+        print(f"\n--- Eval 指标 ---")
+        print(f"Eval 次数: {len(eval_accuracy)}")
+        print(f"初始 Eval 准确率: {eval_accuracy[0]:.2%} (Step {eval_steps[0]})")
+        print(f"最终 Eval 准确率: {eval_accuracy[-1]:.2%} (Step {eval_steps[-1]})")
+        print(f"最高 Eval 准确率: {max(eval_accuracy):.2%} (Step {eval_steps[eval_accuracy.index(max(eval_accuracy))]})")
 
     if mean_reward:
-        print(f"平均奖励: {sum(mean_reward)/len(mean_reward):.3f}")
+        print(f"\n平均奖励: {sum(mean_reward)/len(mean_reward):.3f}")
 
     if thinking_rate:
         print(f"初始 Thinking Rate: {thinking_rate[0]:.0%}")

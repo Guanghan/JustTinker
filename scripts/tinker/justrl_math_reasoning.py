@@ -124,11 +124,11 @@ class ReasoningConfig:
                 "eval_samples": 10,
             },
             "medium": {
-                "num_steps": 500,
+                "num_steps": 800,
                 "batch_size": 32,
-                "eval_interval": 50,
+                "eval_interval": 20,
                 "save_interval": 10,
-                "eval_samples": 100,
+                "eval_samples": 200,
             },
             "full": {
                 "num_steps": 2000,
@@ -301,12 +301,45 @@ def load_math_dataset(
 
 
 def _extract_boxed_answer(solution: str) -> str:
-    """从solution中提取\\boxed{}答案"""
+    """
+    从solution中提取\\boxed{}答案
+
+    支持两种格式:
+    1. \\boxed{答案} - 标准格式，支持任意层级嵌套
+    2. \\boxed 答案 - 无括号格式（如 \\boxed 2）
+
+    例如:
+    - \\boxed{\\dfrac{\\sqrt{6}}{6}} -> \\dfrac{\\sqrt{6}}{6}
+    - \\boxed 2 -> 2
+    """
     import re
-    # 匹配 \boxed{...} 格式
-    match = re.search(r"\\boxed\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}", solution)
+
+    # 方法1: 找 \boxed{...} 格式（取最后一个）
+    prefix = "\\boxed{"
+    idx = solution.rfind(prefix)
+
+    if idx != -1:
+        # 从 \boxed{ 之后开始，使用括号匹配找到对应的 }
+        start = idx + len(prefix)
+        depth = 1
+        i = start
+
+        while i < len(solution) and depth > 0:
+            if solution[i] == '{':
+                depth += 1
+            elif solution[i] == '}':
+                depth -= 1
+            i += 1
+
+        if depth == 0:
+            return solution[start:i-1]  # 不包含最后的 }
+
+    # 方法2: 找 \boxed X 格式（无括号，如 \boxed 2）
+    # 匹配 \boxed 后跟空格和内容（到行尾、句号或$符号为止）
+    match = re.search(r"\\boxed\s+([^\s\$\.\,\)]+)", solution)
     if match:
-        return match.group(1)
+        return match.group(1).rstrip(".")
+
     return ""
 
 
@@ -612,10 +645,12 @@ class MathReasoningVerifier:
 
         answer = answer.strip()
 
-        # 1. 处理 \text{...} - 保留内容，移除包装
+        # 1. 处理 \text{...}, \textbf{...}, \mathrm{...} 等 - 保留内容，移除包装
         answer = self.re.sub(r"\\text\s*\{([^}]*)\}", r"\1", answer)
         answer = self.re.sub(r"\\mathrm\s*\{([^}]*)\}", r"\1", answer)
         answer = self.re.sub(r"\\textbf\s*\{([^}]*)\}", r"\1", answer)
+        answer = self.re.sub(r"\\textit\s*\{([^}]*)\}", r"\1", answer)
+        answer = self.re.sub(r"\\mathbf\s*\{([^}]*)\}", r"\1", answer)
 
         # 2. 处理货币符号
         answer = answer.replace("\\$", "")  # LaTeX 转义的美元符号
@@ -630,8 +665,8 @@ class MathReasoningVerifier:
         answer = answer.replace("\\circ", "°")
         answer = answer.replace("degrees", "°")
 
-        # 5. 移除逗号和空格
-        answer = answer.replace(",", "")
+        # 5. 移除逗号和空格（保留必要的结构）
+        answer = answer.replace(", ", ",")  # 先统一逗号后的空格
         answer = answer.replace(" ", "")
 
         # 6. 统一分数格式
@@ -640,26 +675,124 @@ class MathReasoningVerifier:
         answer = answer.replace("\\tfrac", "frac")
 
         # 7. 统一其他 LaTeX 符号
-        answer = answer.replace("\\pi", "pi")
-        answer = answer.replace("\\sqrt", "sqrt")
+        answer = answer.replace("\\pi", "π")
+        # sqrt: \sqrt{2} -> √2, \sqrt2 -> √2
+        answer = self.re.sub(r"\\sqrt\{([^}]+)\}", r"√\1", answer)
+        answer = self.re.sub(r"\\sqrt(\d)", r"√\1", answer)
         answer = answer.replace("\\cdot", "*")
         answer = answer.replace("\\times", "*")
         answer = answer.replace("\\div", "/")
         answer = answer.replace("\\left", "")
         answer = answer.replace("\\right", "")
+        answer = answer.replace("\\infty", "∞")
+        answer = answer.replace("\\pm", "±")
+        answer = answer.replace("\\mp", "∓")
+        answer = answer.replace("\\leq", "≤")
+        answer = answer.replace("\\le", "≤")
+        answer = answer.replace("\\geq", "≥")
+        answer = answer.replace("\\ge", "≥")
+        answer = answer.replace("\\neq", "≠")
+        answer = answer.replace("\\ne", "≠")
+        answer = answer.replace("\\ldots", "...")
+        answer = answer.replace("\\cdots", "...")
+        answer = answer.replace("\\dots", "...")
+
+        # 8. 统一指数格式: x^2 和 x^{2} 统一
+        answer = self.re.sub(r"\^{(\d+)}", r"^\1", answer)  # ^{2} -> ^2
+        answer = self.re.sub(r"\^{([a-z])}", r"^\1", answer)  # ^{n} -> ^n
 
         answer = answer.lower()
+
+        # 9. 处理选择题格式: (a), (b), (c), (d), (e) -> a, b, c, d, e
+        choice_match = self.re.match(r"^\(([a-e])\)$", answer)
+        if choice_match:
+            answer = choice_match.group(1)
+
+        # 10. 移除多余逗号（在数字中间的逗号）
+        answer = self.re.sub(r"(\d),(\d)", r"\1\2", answer)
+
+        # 11. 移除常见单位 (JustRL 风格)
+        units = [
+            "centimeter", "centimeters", "cm",
+            "millimeter", "millimeters", "mm",
+            "meter", "meters", "m",
+            "kilometer", "kilometers", "km",
+            "inch", "inches", "ft", "feet", "foot", "yard", "yards", "mile", "miles",
+            "kilogram", "kilograms", "kg", "gram", "grams", "g", "mg", "lb", "lbs", "oz", "ounce", "ounces",
+            "liter", "liters", "ml", "gallon", "gallons",
+            "second", "seconds", "sec", "minute", "minutes", "min", "hour", "hours", "hr", "day", "days",
+            "dollar", "dollars", "cent", "cents", "euro", "euros",
+            "square", "cubic", "sq", "cu",
+        ]
+        for unit in units:
+            # 移除数字后面的单位 (如 "5cm" -> "5")
+            answer = self.re.sub(rf"(\d)\s*{unit}s?\b", r"\1", answer, flags=self.re.IGNORECASE)
+
+        # 12. 处理文字数字 (JustRL 风格)
+        text_numbers = {
+            "million": "000000",
+            "billion": "000000000",
+            "trillion": "000000000000",
+            "thousand": "000",
+            "hundred": "00",
+        }
+        for word, zeros in text_numbers.items():
+            # "5 million" -> "5000000"
+            match = self.re.search(rf"(\d+\.?\d*)\s*{word}", answer, flags=self.re.IGNORECASE)
+            if match:
+                num = match.group(1)
+                if "." in num:
+                    # 处理小数: "1.5 million" -> "1500000"
+                    parts = num.split(".")
+                    int_part = parts[0]
+                    dec_part = parts[1] if len(parts) > 1 else ""
+                    zeros_to_add = len(zeros) - len(dec_part)
+                    replacement = int_part + dec_part + "0" * zeros_to_add
+                else:
+                    replacement = num + zeros
+                answer = self.re.sub(rf"{num}\s*{word}", replacement, answer, flags=self.re.IGNORECASE)
 
         return answer
 
     def extract_answer(self, text: str) -> Optional[str]:
         """从response中提取答案"""
-        # 优先匹配 \boxed{...}
-        boxed_pattern = r"\\boxed\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}"
-        matches = list(self.re.finditer(boxed_pattern, text))
-        if matches:
-            # 取最后一个boxed答案（通常是最终答案）
-            return matches[-1].group(1)
+        # 优先匹配 \boxed{...} - 使用递归方法处理嵌套大括号
+        def find_boxed_content(s: str) -> Optional[str]:
+            """递归提取 \boxed{} 内容，正确处理嵌套大括号"""
+            # 找所有 \boxed{ 的位置
+            starts = []
+            idx = 0
+            while True:
+                pos = s.find("\\boxed{", idx)
+                if pos == -1:
+                    break
+                starts.append(pos)
+                idx = pos + 1
+
+            if not starts:
+                return None
+
+            # 取最后一个 \boxed{
+            start = starts[-1]
+            brace_start = start + len("\\boxed{")
+
+            # 匹配平衡的大括号
+            depth = 1
+            i = brace_start
+            while i < len(s) and depth > 0:
+                if s[i] == '{':
+                    depth += 1
+                elif s[i] == '}':
+                    depth -= 1
+                i += 1
+
+            if depth == 0:
+                return s[brace_start:i-1]
+            return None
+
+        boxed = find_boxed_content(text)
+        if boxed is not None:
+            return boxed
 
         # 其他模式
         patterns = [
@@ -674,6 +807,125 @@ class MathReasoningVerifier:
                 return match.group(1).strip()
 
         return None
+
+    def _numeric_equal(self, a: str, b: str) -> bool:
+        """尝试数值比较，处理分数、π、√ 等"""
+        import math
+
+        def try_eval(s: str) -> Optional[float]:
+            """尝试将字符串转为数值"""
+            if not s:
+                return None
+            try:
+                # 直接尝试 float
+                return float(s)
+            except ValueError:
+                pass
+
+            # 处理简单分数: frac{a}{b} 或 a/b
+            frac_match = self.re.match(r"^frac\{(-?\d+)\}\{(\d+)\}$", s)
+            if frac_match:
+                num, den = int(frac_match.group(1)), int(frac_match.group(2))
+                if den != 0:
+                    return num / den
+
+            frac_match2 = self.re.match(r"^(-?\d+)/(\d+)$", s)
+            if frac_match2:
+                num, den = int(frac_match2.group(1)), int(frac_match2.group(2))
+                if den != 0:
+                    return num / den
+
+            # 处理 π (支持 2π, -3π, π, -π 等格式)
+            pi_match = self.re.match(r"^(-?\d*\.?\d*)π$", s)
+            if pi_match:
+                coef = pi_match.group(1)
+                if coef == '' or coef == '+':
+                    coef = 1.0
+                elif coef == '-':
+                    coef = -1.0
+                else:
+                    coef = float(coef)
+                return coef * math.pi
+
+            # 处理 √n 格式
+            sqrt_match = self.re.match(r"^√(\d+)$", s)
+            if sqrt_match:
+                return math.sqrt(int(sqrt_match.group(1)))
+
+            # 处理 a√b 格式 (如 2√3)
+            sqrt_match2 = self.re.match(r"^(-?\d+)√(\d+)$", s)
+            if sqrt_match2:
+                coef = int(sqrt_match2.group(1))
+                val = int(sqrt_match2.group(2))
+                return coef * math.sqrt(val)
+
+            return None
+
+        val_a = try_eval(a)
+        val_b = try_eval(b)
+
+        if val_a is not None and val_b is not None:
+            return abs(val_a - val_b) < 1e-6
+
+        return False
+
+    def _sympy_equal(self, a: str, b: str) -> bool:
+        """使用 SymPy 进行符号比较（作为 fallback）"""
+        try:
+            import warnings
+            from sympy import simplify, sympify, N, Symbol
+            from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application
+        except ImportError:
+            return False
+
+        def try_parse(s: str):
+            """尝试解析表达式"""
+            # 清理字符串
+            # √2 -> sqrt(2), √{2} -> sqrt(2)
+            s = self.re.sub(r"√\{?(\d+)\}?", r"sqrt(\1)", s)
+            s = s.replace("π", "pi")
+            s = s.replace("∞", "oo")  # SymPy 的无穷
+            s = s.replace("^", "**")  # SymPy 用 ** 表示乘方
+            # frac{a}{b} -> (a)/(b)
+            s = self.re.sub(r"frac\{([^}]+)\}\{([^}]+)\}", r"(\1)/(\2)", s)
+            # 处理隐式乘法: 2x -> 2*x
+            s = self.re.sub(r"(\d)([a-z])", r"\1*\2", s)
+
+            transformations = standard_transformations + (implicit_multiplication_application,)
+
+            try:
+                return parse_expr(s, transformations=transformations)
+            except:
+                pass
+
+            try:
+                return sympify(s)
+            except:
+                pass
+
+            return None
+
+        # 使用 context manager 抑制 SymPy 解析时的 SyntaxWarning
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=SyntaxWarning)
+
+            expr_a = try_parse(a)
+            expr_b = try_parse(b)
+
+            if expr_a is None or expr_b is None:
+                return False
+
+            try:
+                # 尝试化简差值
+                diff = simplify(expr_a - expr_b)
+                if diff == 0:
+                    return True
+
+                # 数值比较
+                val_diff = abs(complex(N(diff)))
+                return val_diff < 1e-6
+            except:
+                return False
 
     def verify(
         self,
@@ -717,18 +969,18 @@ class MathReasoningVerifier:
 
         is_correct = False
 
-        # 直接字符串比较
+        # 三层验证：字符串 → 数值 → SymPy
         if extracted_norm == gold_norm:
+            # 1. 直接字符串比较
+            is_correct = True
+        elif self._numeric_equal(extracted_norm, gold_norm):
+            # 2. 数值比较 (分数、π、√ 等)
+            is_correct = True
+        elif self._sympy_equal(extracted_norm, gold_norm):
+            # 3. SymPy 符号比较 (fallback)
             is_correct = True
         else:
-            # 尝试数值比较
-            try:
-                ext_val = float(extracted_norm.replace("pi", "").replace("sqrt", ""))
-                gold_val = float(gold_norm.replace("pi", "").replace("sqrt", ""))
-                if abs(ext_val - gold_val) < 1e-6:
-                    is_correct = True
-            except (ValueError, TypeError):
-                pass
+            is_correct = False
 
         # 计算奖励
         if is_correct:
@@ -938,13 +1190,13 @@ class ReasoningTrainer:
 
         # 并发发送所有采样请求
         futures = []
-        prompt_lengths = []
+        prompt_data = []  # 存储 (prompt_tokens, prompt_length)
         for problem in problems:
             # 使用新的format_prompt方法获取ModelInput
             model_input = self.format_prompt(problem)
             prompt_tokens = model_input.to_ints()
             prompt_length = len(prompt_tokens)
-            prompt_lengths.append(prompt_length)
+            prompt_data.append((prompt_tokens, prompt_length))
 
             future = sampling_client.sample(
                 prompt=model_input,
@@ -954,23 +1206,27 @@ class ReasoningTrainer:
             futures.append(future)
 
         # 统一等待并处理结果
-        for future, prompt_length in zip(futures, prompt_lengths):
+        for future, (prompt_tokens, prompt_length) in zip(futures, prompt_data):
             result = future.result()
 
             samples = []
             for seq in result.sequences:
-                tokens = list(seq.tokens) if hasattr(seq.tokens, '__iter__') else seq.tokens
-                logprobs = list(seq.logprobs) if seq.logprobs and hasattr(seq.logprobs, '__iter__') else [0.0] * len(tokens)
+                response_tokens = list(seq.tokens) if hasattr(seq.tokens, '__iter__') else seq.tokens
+                response_logprobs = list(seq.logprobs) if seq.logprobs and hasattr(seq.logprobs, '__iter__') else [0.0] * len(response_tokens)
 
-                # 使用parse_response解析输出
-                parsed = self.parse_response(tokens)
+                # 完整序列 = prompt + response（用于训练）
+                full_tokens = list(prompt_tokens) + list(response_tokens)
+                full_logprobs = [0.0] * prompt_length + list(response_logprobs)
+
+                # 使用parse_response解析输出（只解析response部分）
+                parsed = self.parse_response(response_tokens)
 
                 samples.append({
                     "text": parsed["full_text"],  # 用于验证
                     "content": parsed["content"],
                     "thinking": parsed["thinking"],
-                    "tokens": tokens,
-                    "logprobs": logprobs,
+                    "tokens": full_tokens,  # 完整序列：prompt + response
+                    "logprobs": full_logprobs,
                     "prompt_length": prompt_length,
                 })
             all_samples.append(samples)
@@ -1457,23 +1713,35 @@ def main():
     print("模型加载完成")
 
     # 从 checkpoint 恢复（如果指定）
+    start_step = 0  # 默认从0开始（即第一个step是1）
     if args.checkpoint:
         print(f"\n从 checkpoint 恢复: {args.checkpoint}")
         try:
             training_client.load_state(args.checkpoint)
             print(f"Checkpoint 加载成功: {args.checkpoint}")
+
+            # 从 checkpoint 名称解析 step 数
+            # 支持格式: checkpoint_step_50, checkpoint_step_50/weights, tinker://xxx/checkpoint_step_50
+            import re
+            step_match = re.search(r'checkpoint_step_(\d+)', args.checkpoint)
+            if step_match:
+                start_step = int(step_match.group(1))
+                print(f"从 step {start_step} 继续训练 (下一步为 step {start_step + 1})")
+            else:
+                print("Warning: 无法从 checkpoint 名称解析 step 数，从 step 1 开始")
         except Exception as e:
             print(f"Warning: 无法加载 checkpoint: {e}")
             print("继续使用基座模型...")
 
     # 创建训练器
     trainer = ReasoningTrainer(config, training_client, verifier)
+    trainer.global_step = start_step  # 设置起始 step
 
     # 训练循环
     print("\n开始训练...")
     print("-" * 60)
 
-    for step in range(1, config.num_steps + 1):
+    for step in range(start_step + 1, config.num_steps + 1):
         batch_indices = random.sample(range(len(train_data)), config.batch_size)
         batch = [train_data[i] for i in batch_indices]
 
@@ -1517,6 +1785,11 @@ def main():
             if config.reasoning_mode:
                 eval_msg += f" | Think: {eval_stats['thinking_rate']:.0%}"
             print(eval_msg)
+
+            # 记录 eval 指标到 history（用于绘图）
+            trainer.history["eval_step"].append(step)
+            trainer.history["eval_accuracy"].append(eval_stats["eval_accuracy"])
+            trainer.history["eval_thinking_rate"].append(eval_stats.get("thinking_rate", 0))
 
             print_eval_samples(
                 eval_stats["samples"],
