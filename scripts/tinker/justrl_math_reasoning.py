@@ -107,7 +107,7 @@ class ReasoningConfig:
 
     # 生成设置
     max_prompt_length: int = 1024  # MATH问题更长
-    max_response_length: int = 8192  # reasoning需要更长输出
+    max_response_length: int = 15360  # JustRL 使用 15k，对齐论文设置
 
     # 评估设置
     eval_interval: int = 50
@@ -115,7 +115,9 @@ class ReasoningConfig:
     save_interval: int = 100
 
     # 数据集设置
-    math_subjects: Optional[List[str]] = None  # None表示所有科目
+    train_dataset: str = "dapo-math-17k"  # 训练数据集: "math" 或 "dapo-math-17k"
+    eval_datasets: List[str] = None  # 评估数据集列表，默认 ["math", "aime-2024"]
+    math_subjects: Optional[List[str]] = None  # None表示所有科目 (仅 math 数据集)
 
     # 输出设置
     output_dir: str = "outputs/justrl_reasoning"
@@ -150,16 +152,20 @@ class ReasoningConfig:
             for key, value in scale_configs[self.scale].items():
                 setattr(self, key, value)
 
-        # Reasoning模式需要更长的输出
+        # Reasoning模式需要更长的输出 (对齐 JustRL: 15k)
         if self.reasoning_mode:
             thinking_budgets = {
-                "low": 4096,
-                "medium": 8192,
-                "high": 16384,
+                "low": 8192,
+                "medium": 15360,   # JustRL 默认 15k
+                "high": 20480,     # 更长的推理
             }
             self.max_response_length = thinking_budgets.get(
-                self.thinking_budget, 8192
+                self.thinking_budget, 15360
             )
+
+        # 设置默认评估数据集
+        if self.eval_datasets is None:
+            self.eval_datasets = ["math", "aime-2024"]
 
 
 # ============================================================
@@ -355,6 +361,168 @@ def _extract_boxed_answer(solution: str) -> str:
         return match.group(1).rstrip(".")
 
     return ""
+
+
+def load_dapo_math_dataset(
+    max_samples: Optional[int] = None,
+    seed: int = 42,
+) -> List[Dict]:
+    """
+    加载 DAPO-Math-17k 数据集 (BytedTsinghua-SIA/DAPO-Math-17k)
+
+    DAPO-Math-17k 是 DAPO 论文使用的训练数据集，包含约 17k 高质量数学题目。
+    数据来源于多个数学数据集的筛选和去重。
+
+    数据格式:
+    {
+        "prompt": [{"content": "问题内容...", "role": "user"}],
+        "reward_model": {"ground_truth": "答案", "style": "rule-lighteval/MATH_v2"},
+        ...
+    }
+
+    Args:
+        max_samples: 最大样本数，None 表示全部 (~17k)
+        seed: 随机种子
+    """
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        print("Error: 请安装datasets库: pip install datasets")
+        sys.exit(1)
+
+    print("加载 DAPO-Math-17k 数据集...")
+
+    try:
+        ds = load_dataset("BytedTsinghua-SIA/DAPO-Math-17k", split="train")
+        print(f"  原始数据量: {len(ds)} 条")
+    except Exception as e:
+        print(f"  加载失败: {e}")
+        print("  尝试使用处理过的版本...")
+        try:
+            ds = load_dataset("open-r1/DAPO-Math-17k-Processed", split="train")
+            print(f"  使用 open-r1/DAPO-Math-17k-Processed: {len(ds)} 条")
+        except Exception as e2:
+            print(f"  备用数据集也加载失败: {e2}")
+            return _get_mock_math_data(max_samples or 100)
+
+    # 转换数据格式
+    samples = []
+    for item in ds:
+        try:
+            # 提取问题内容
+            prompt_list = item.get("prompt", [])
+            if prompt_list and len(prompt_list) > 0:
+                problem = prompt_list[0].get("content", "")
+            else:
+                continue
+
+            # 提取答案
+            reward_model = item.get("reward_model", {})
+            answer = reward_model.get("ground_truth", "")
+
+            if problem and answer:
+                samples.append({
+                    "problem": problem,
+                    "answer": str(answer).strip(),
+                    "source": "dapo-math-17k",
+                    "data_source": item.get("data_source", "unknown"),
+                })
+        except Exception as e:
+            continue
+
+    print(f"  有效样本: {len(samples)} 条")
+
+    # 去重（基于问题内容）
+    seen_problems = set()
+    unique_samples = []
+    for s in samples:
+        problem_hash = hash(s["problem"][:200])  # 用前200字符作为hash
+        if problem_hash not in seen_problems:
+            seen_problems.add(problem_hash)
+            unique_samples.append(s)
+
+    print(f"  去重后: {len(unique_samples)} 条")
+    samples = unique_samples
+
+    # 随机打乱并采样
+    random.seed(seed)
+    random.shuffle(samples)
+
+    if max_samples and max_samples < len(samples):
+        samples = samples[:max_samples]
+        print(f"  采样: {len(samples)} 条")
+
+    return samples
+
+
+def load_aime_dataset(
+    year: str = "2024",
+    seed: int = 42,
+) -> List[Dict]:
+    """
+    加载 AIME 数据集 (HuggingFaceH4/aime_2024)
+
+    AIME (American Invitational Mathematics Examination) 是美国数学邀请赛，
+    难度高于 AMC，是选拔 IMO 美国队的第二轮考试。
+
+    2024 年 AIME 共 30 道题目（AIME I + AIME II 各 15 题）。
+    答案均为 0-999 的整数。
+
+    数据格式:
+    {
+        "id": 60,
+        "problem": "问题内容...",
+        "solution": "解答过程...",
+        "answer": "204",
+        "url": "https://...",
+        "year": "2024"
+    }
+
+    Args:
+        year: 年份，目前支持 "2024"
+        seed: 随机种子
+    """
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        print("Error: 请安装datasets库: pip install datasets")
+        sys.exit(1)
+
+    print(f"加载 AIME {year} 数据集...")
+
+    dataset_name = "HuggingFaceH4/aime_2024" if year == "2024" else f"HuggingFaceH4/aime_{year}"
+
+    try:
+        ds = load_dataset(dataset_name, split="train")
+        print(f"  数据量: {len(ds)} 条")
+    except Exception as e:
+        print(f"  加载失败: {e}")
+        # 尝试备用数据集
+        try:
+            ds = load_dataset("Maxwell-Jia/AIME_2024", split="train")
+            print(f"  使用备用数据集 Maxwell-Jia/AIME_2024: {len(ds)} 条")
+        except Exception as e2:
+            print(f"  备用数据集也加载失败: {e2}")
+            return []
+
+    # 转换数据格式
+    samples = []
+    for item in ds:
+        problem = item.get("problem", "")
+        answer = item.get("answer", "")
+
+        if problem and answer:
+            samples.append({
+                "problem": problem,
+                "answer": str(answer).strip(),
+                "source": f"aime-{year}",
+                "solution": item.get("solution", ""),
+                "url": item.get("url", ""),
+            })
+
+    print(f"  有效样本: {len(samples)} 条")
+
+    return samples
 
 
 def _get_mock_math_data(n: int) -> List[Dict]:
@@ -1758,6 +1926,10 @@ def main():
                         help="格式奖励权重：正确但无thinking时的惩罚 (默认0.1)")
     parser.add_argument("--checkpoint", type=str, default=None,
                         help="从指定的 checkpoint 继续训练 (如 coldstart_sft_final)")
+    parser.add_argument("--eval-only", action="store_true",
+                        help="只进行评估，不训练 (需要配合 --checkpoint 使用)")
+    parser.add_argument("--eval-temperature", type=float, default=0.7,
+                        help="评估时的采样温度 (默认 0.7)")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output-dir", type=str, default="outputs/justrl_reasoning")
     parser.add_argument("--dry-run", action="store_true",
@@ -1849,9 +2021,26 @@ def main():
         print(f"  (Reasoning模式输出更长，成本较高)")
     print("=" * 60)
 
-    # 加载数据
-    train_data = load_math_dataset("train")
-    eval_data = load_math_dataset("test", max_samples=config.eval_samples)
+    # 加载训练数据
+    print(f"\n训练数据集: {config.train_dataset}")
+    if config.train_dataset == "dapo-math-17k":
+        train_data = load_dapo_math_dataset()
+    else:
+        train_data = load_math_dataset("train")
+
+    # 加载评估数据集（支持多个）
+    print(f"\n评估数据集: {config.eval_datasets}")
+    eval_data_dict = {}
+    for eval_ds in config.eval_datasets:
+        if eval_ds == "math":
+            eval_data_dict["math"] = load_math_dataset("test", max_samples=config.eval_samples)
+        elif eval_ds == "aime-2024":
+            eval_data_dict["aime-2024"] = load_aime_dataset(year="2024")
+        else:
+            print(f"  [WARNING] 未知的评估数据集: {eval_ds}")
+
+    # 兼容旧代码：主评估数据集
+    eval_data = eval_data_dict.get("math", list(eval_data_dict.values())[0] if eval_data_dict else [])
 
     # 初始化验证器（使用配置的格式奖励和冗余度惩罚权重）
     verifier = MathReasoningVerifier(
@@ -1957,6 +2146,58 @@ def main():
     trainer = ReasoningTrainer(config, training_client, verifier)
     trainer.global_step = start_step  # 设置起始 step
 
+    # ============================================================
+    # Eval-only 模式
+    # ============================================================
+    if args.eval_only:
+        if not args.checkpoint:
+            print("Error: --eval-only 需要配合 --checkpoint 使用")
+            sys.exit(1)
+
+        print("\n" + "=" * 60)
+        print("Eval-Only 模式")
+        print("=" * 60)
+        print(f"Checkpoint: {args.checkpoint}")
+        print(f"Temperature: {args.eval_temperature}")
+
+        # 临时修改 config 的 temperature
+        original_temp = config.temperature
+        config.temperature = args.eval_temperature
+
+        # 获取 sampling client
+        sampling_client = training_client.save_weights_and_get_sampling_client(
+            name="eval_only_temp"
+        )
+
+        # 评估 MATH
+        eval_problems = [item["problem"] for item in eval_data]
+        eval_answers = [item["answer"] for item in eval_data]
+
+        print(f"\n评估 MATH ({len(eval_problems)} 样本)...")
+        # 需要临时调整 trainer 的 eval temperature
+        eval_stats = trainer.evaluate(eval_problems, eval_answers, sampling_client)
+        print(f"  MATH 准确率: {eval_stats['eval_accuracy']:.2%} ({eval_stats['eval_correct']}/{eval_stats['eval_total']})")
+        print(f"  Thinking Rate: {eval_stats['thinking_rate']:.2%}")
+
+        # 评估 AIME (如果有)
+        if "aime-2024" in eval_data_dict and eval_data_dict["aime-2024"]:
+            aime_data = eval_data_dict["aime-2024"]
+            aime_problems = [item["problem"] for item in aime_data]
+            aime_answers = [item["answer"] for item in aime_data]
+
+            print(f"\n评估 AIME 2024 ({len(aime_problems)} 样本)...")
+            aime_stats = trainer.evaluate(aime_problems, aime_answers, sampling_client)
+            print(f"  AIME 准确率: {aime_stats['eval_accuracy']:.2%} ({aime_stats['eval_correct']}/{aime_stats['eval_total']})")
+            print(f"  Thinking Rate: {aime_stats['thinking_rate']:.2%}")
+
+        print("\n" + "=" * 60)
+        print("Eval-Only 完成")
+        print("=" * 60)
+
+        # 恢复 config
+        config.temperature = original_temp
+        sys.exit(0)
+
     # 训练循环
     print("\n开始训练...")
     print("-" * 60)
@@ -2022,16 +2263,16 @@ def main():
             elif avg_chunk_sim > 0.6:
                 print(f"  [WARNING] High chunk similarity: {avg_chunk_sim:.1%} (threshold: 60%)")
 
-        # 评估
+        # 评估（支持多数据集）
         if step % config.eval_interval == 0:
-            # 直接传递problems，evaluate内部会格式化
+            # 主评估数据集（MATH）
             eval_problems = [item["problem"] for item in eval_data]
             eval_answers = [item["answer"] for item in eval_data]
 
             eval_stats = trainer.evaluate(
                 eval_problems, eval_answers, sampling_client
             )
-            eval_msg = (f"  [Eval] Accuracy: {eval_stats['eval_accuracy']:.2%} "
+            eval_msg = (f"  [Eval MATH] Accuracy: {eval_stats['eval_accuracy']:.2%} "
                         f"({eval_stats['eval_correct']}/{eval_stats['eval_total']})")
             if config.reasoning_mode:
                 eval_msg += f" | Think: {eval_stats['thinking_rate']:.0%}"
@@ -2051,6 +2292,34 @@ def main():
 
             samples_file = run_dir / f"eval_samples_step_{step}.json"
             save_eval_samples(eval_stats["samples"], samples_file, step)
+
+            # AIME 2024 评估（如果配置了）
+            if "aime-2024" in eval_data_dict and eval_data_dict["aime-2024"]:
+                aime_data = eval_data_dict["aime-2024"]
+                aime_problems = [item["problem"] for item in aime_data]
+                aime_answers = [item["answer"] for item in aime_data]
+
+                aime_stats = trainer.evaluate(
+                    aime_problems, aime_answers, sampling_client
+                )
+                aime_msg = (f"  [Eval AIME] Accuracy: {aime_stats['eval_accuracy']:.2%} "
+                            f"({aime_stats['eval_correct']}/{aime_stats['eval_total']})")
+                if config.reasoning_mode:
+                    aime_msg += f" | Think: {aime_stats['thinking_rate']:.0%}"
+                print(aime_msg)
+
+                # 记录 AIME 指标
+                if "eval_aime_accuracy" not in trainer.history:
+                    trainer.history["eval_aime_accuracy"] = []
+                trainer.history["eval_aime_accuracy"].append(aime_stats["eval_accuracy"])
+
+                if "eval_aime_thinking_rate" not in trainer.history:
+                    trainer.history["eval_aime_thinking_rate"] = []
+                trainer.history["eval_aime_thinking_rate"].append(aime_stats.get("thinking_rate", 0))
+
+                # 保存 AIME 样本
+                aime_samples_file = run_dir / f"eval_aime_samples_step_{step}.json"
+                save_eval_samples(aime_stats["samples"], aime_samples_file, step)
 
             # 早停检查
             if config.early_stopping:
@@ -2107,36 +2376,65 @@ def main():
 
     # 最终评估
     sampling_client = training_client.save_weights_and_get_sampling_client(name="final")
+
+    # MATH 最终评估
     eval_problems = [item["problem"] for item in eval_data]
     eval_answers = [item["answer"] for item in eval_data]
     final_eval = trainer.evaluate(
         eval_problems, eval_answers, sampling_client
     )
 
-    final_msg = f"最终评估准确率: {final_eval['eval_accuracy']:.2%}"
+    print("\n--- MATH 最终评估 ---")
+    final_msg = f"MATH 准确率: {final_eval['eval_accuracy']:.2%}"
     if config.reasoning_mode:
         final_msg += f" | Thinking率: {final_eval['thinking_rate']:.0%}"
     print(final_msg)
-    print_eval_samples(final_eval["samples"], num_correct=3, num_incorrect=3,
+    print_eval_samples(final_eval["samples"], num_correct=2, num_incorrect=2,
                        max_response_len=config.max_response_length)
-
     save_eval_samples(final_eval["samples"], run_dir / "eval_samples_final.json", config.num_steps)
-    print(f"输出目录: {run_dir}")
+
+    # AIME 2024 最终评估
+    final_aime_eval = None
+    if "aime-2024" in eval_data_dict and eval_data_dict["aime-2024"]:
+        aime_data = eval_data_dict["aime-2024"]
+        aime_problems = [item["problem"] for item in aime_data]
+        aime_answers = [item["answer"] for item in aime_data]
+        final_aime_eval = trainer.evaluate(
+            aime_problems, aime_answers, sampling_client
+        )
+
+        print("\n--- AIME 2024 最终评估 ---")
+        aime_msg = f"AIME 准确率: {final_aime_eval['eval_accuracy']:.2%} ({final_aime_eval['eval_correct']}/30)"
+        if config.reasoning_mode:
+            aime_msg += f" | Thinking率: {final_aime_eval['thinking_rate']:.0%}"
+        print(aime_msg)
+        print_eval_samples(final_aime_eval["samples"], num_correct=1, num_incorrect=2,
+                           max_response_len=config.max_response_length)
+        save_eval_samples(final_aime_eval["samples"], run_dir / "eval_aime_samples_final.json", config.num_steps)
+
+    print(f"\n输出目录: {run_dir}")
     print("=" * 60)
 
     # 保存最终结果
     results = {
         "config": asdict(config),
         "final_eval": {
-            "accuracy": final_eval["eval_accuracy"],
-            "correct": final_eval["eval_correct"],
-            "total": final_eval["eval_total"],
+            "math_accuracy": final_eval["eval_accuracy"],
+            "math_correct": final_eval["eval_correct"],
+            "math_total": final_eval["eval_total"],
         },
         "training_summary": {
             "total_steps": trainer.global_step,
             "final_train_accuracy": trainer.history["accuracy"][-1] if trainer.history["accuracy"] else 0,
         },
     }
+
+    # 添加 AIME 结果
+    if final_aime_eval:
+        results["final_eval"]["aime_accuracy"] = final_aime_eval["eval_accuracy"]
+        results["final_eval"]["aime_correct"] = final_aime_eval["eval_correct"]
+        results["final_eval"]["aime_total"] = final_aime_eval["eval_total"]
+
     with open(run_dir / "results.json", "w") as f:
         json.dump(results, f, indent=2)
 
