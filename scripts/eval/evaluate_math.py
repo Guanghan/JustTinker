@@ -22,13 +22,14 @@ Author: Guanghan Ning
 Date: 2025-12-24
 """
 
+import argparse
+import json
 import os
 import sys
-import json
-import argparse
-from pathlib import Path
-from typing import List, Dict, Optional
 from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
 from tqdm import tqdm
 
 # 添加项目根目录到path
@@ -36,7 +37,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 
-def load_gsm8k(split: str = "test", max_samples: Optional[int] = None) -> List[Dict]:
+def load_gsm8k(split: str = "test", max_samples: int | None = None) -> list[dict]:
     """加载GSM8K数据集"""
     from datasets import load_dataset
 
@@ -59,7 +60,7 @@ def load_gsm8k(split: str = "test", max_samples: Optional[int] = None) -> List[D
     return samples
 
 
-def load_math_500(max_samples: Optional[int] = None) -> List[Dict]:
+def load_math_500(max_samples: int | None = None) -> list[dict]:
     """加载MATH-500子集"""
     try:
         from datasets import load_dataset
@@ -107,7 +108,7 @@ class MathVerifier:
             r"=\s*([^\n=]+?)\s*$",
         ]
 
-    def extract_answer(self, text: str) -> Optional[str]:
+    def extract_answer(self, text: str) -> str | None:
         """提取答案"""
         for pattern in self.patterns:
             match = self.re.search(pattern, text, self.re.MULTILINE)
@@ -116,7 +117,7 @@ class MathVerifier:
                 return answer
         return None
 
-    def verify(self, response: str, gold: str) -> Dict:
+    def verify(self, response: str, gold: str) -> dict:
         """验证答案"""
         extracted = self.extract_answer(response)
         gold = str(gold).replace(",", "").strip()
@@ -138,11 +139,11 @@ class MathVerifier:
 
 def evaluate_with_tinker(
     checkpoint: str,
-    samples: List[Dict],
+    samples: list[dict],
     verifier: MathVerifier,
     max_tokens: int = 4096,
     temperature: float = 0.0,
-) -> Dict:
+) -> dict:
     """使用Tinker评估checkpoint"""
     import tinker
     from tinker import SamplingParams
@@ -192,11 +193,11 @@ def evaluate_with_tinker(
 
 def evaluate_with_vllm(
     model_path: str,
-    samples: List[Dict],
+    samples: list[dict],
     verifier: MathVerifier,
     max_tokens: int = 4096,
     temperature: float = 0.0,
-) -> Dict:
+) -> dict:
     """使用vLLM评估本地模型"""
     try:
         from vllm import LLM, SamplingParams
@@ -223,7 +224,7 @@ def evaluate_with_vllm(
     results = []
     correct = 0
 
-    for item, output in zip(samples, outputs):
+    for item, output in zip(samples, outputs, strict=False):
         response = output.outputs[0].text
 
         result = verifier.verify(response, item["answer"])
@@ -313,7 +314,7 @@ def main():
 
         all_results[dataset_name] = eval_result
 
-        print(f"\n结果:")
+        print("\n结果:")
         print(f"  准确率: {eval_result['accuracy']:.2%}")
         print(f"  正确数: {eval_result['correct']}/{eval_result['total']}")
 

@@ -32,10 +32,10 @@
 Author: Guanghan Ning
 """
 
-import json
 import argparse
-from pathlib import Path
+import json
 from datetime import datetime
+from pathlib import Path
 
 
 def find_latest_history() -> Path:
@@ -48,7 +48,7 @@ def find_latest_history() -> Path:
     # 查找所有history.json
     history_files = list(output_dir.glob("*/history.json"))
     if not history_files:
-        raise FileNotFoundError(f"未找到history.json文件，请先运行训练")
+        raise FileNotFoundError("未找到history.json文件，请先运行训练")
 
     # 按修改时间排序，返回最新的
     latest = max(history_files, key=lambda p: p.stat().st_mtime)
@@ -57,15 +57,15 @@ def find_latest_history() -> Path:
 
 def load_history(path: Path) -> dict:
     """加载训练历史"""
-    with open(path, "r") as f:
+    with open(path) as f:
         return json.load(f)
 
 
 def plot_training_curves(history: dict, output_path: Path, title_prefix: str = ""):
     """绘制训练曲线"""
     try:
-        import matplotlib.pyplot as plt
         import matplotlib
+        import matplotlib.pyplot as plt
         matplotlib.use('Agg')  # 无头模式，适合服务器
     except ImportError:
         print("Error: 请安装matplotlib: pip install matplotlib")
@@ -313,8 +313,8 @@ def plot_training_curves(history: dict, output_path: Path, title_prefix: str = "
 def plot_accuracy_only(history: dict, output_path: Path):
     """只绘制Accuracy曲线（简洁版）"""
     try:
-        import matplotlib.pyplot as plt
         import matplotlib
+        import matplotlib.pyplot as plt
         matplotlib.use('Agg')
     except ImportError:
         print("Error: 请安装matplotlib: pip install matplotlib")
@@ -387,14 +387,14 @@ def print_summary(history: dict):
         print(f"Train 准确率提升: {accuracy[-1] - accuracy[0]:+.2%}")
 
     if eval_accuracy:
-        print(f"\n--- Eval MATH 指标 ---")
+        print("\n--- Eval MATH 指标 ---")
         print(f"Eval 次数: {len(eval_accuracy)}")
         print(f"初始 Eval 准确率: {eval_accuracy[0]:.2%} (Step {eval_steps[0]})")
         print(f"最终 Eval 准确率: {eval_accuracy[-1]:.2%} (Step {eval_steps[-1]})")
         print(f"最高 Eval 准确率: {max(eval_accuracy):.2%} (Step {eval_steps[eval_accuracy.index(max(eval_accuracy))]})")
 
     if eval_aime_accuracy:
-        print(f"\n--- Eval AIME 指标 ---")
+        print("\n--- Eval AIME 指标 ---")
         aime_eval_steps = eval_steps[-len(eval_aime_accuracy):]
         print(f"AIME Eval 次数: {len(eval_aime_accuracy)}")
         print(f"初始 AIME 准确率: {eval_aime_accuracy[0]:.2%} (Step {aime_eval_steps[0]})")
@@ -404,7 +404,7 @@ def print_summary(history: dict):
     if mean_reward:
         print(f"\n平均奖励: {sum(mean_reward)/len(mean_reward):.3f}")
 
-    print(f"\n--- Thinking Rate ---")
+    print("\n--- Thinking Rate ---")
     if thinking_rate:
         print(f"Train (DAPO): {thinking_rate[0]:.0%} → {thinking_rate[-1]:.0%}")
     if eval_thinking_rate:
@@ -416,12 +416,12 @@ def print_summary(history: dict):
         print(f"平均响应长度: {sum(avg_response_length)/len(avg_response_length):.0f} tokens")
 
     if avg_thinking_length:
-        valid_lengths = [l for l in avg_thinking_length if l > 0]
+        valid_lengths = [length for length in avg_thinking_length if length > 0]
         if valid_lengths:
             print(f"平均 Thinking 长度: {sum(valid_lengths)/len(valid_lengths):.0f} tokens")
 
     if avg_redundancy_score:
-        print(f"\n--- Redundancy 指标 ---")
+        print("\n--- Redundancy 指标 ---")
         print(f"平均 Redundancy Score: {sum(avg_redundancy_score)/len(avg_redundancy_score):.2%}")
         print(f"最终 Redundancy Score: {avg_redundancy_score[-1]:.2%}")
         if avg_chunk_similarity:

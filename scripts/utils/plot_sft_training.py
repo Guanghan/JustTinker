@@ -34,14 +34,14 @@ Author: Guanghan Ning
 Date: 2025-01-10
 """
 
-import json
 import argparse
-from pathlib import Path
+import json
 from datetime import datetime
-from typing import Optional, Tuple
+from pathlib import Path
+from typing import Optional
 
 
-def find_latest_history(output_dir: str = "outputs/coldstart_sft") -> Tuple[Path, Optional[Path]]:
+def find_latest_history(output_dir: str = "outputs/coldstart_sft") -> tuple[Path, Path | None]:
     """
     查找最新的 history.json 和 eval_history.json 文件
 
@@ -55,7 +55,7 @@ def find_latest_history(output_dir: str = "outputs/coldstart_sft") -> Tuple[Path
     # 查找所有 history.json
     history_files = list(output_path.glob("*/history.json"))
     if not history_files:
-        raise FileNotFoundError(f"未找到 history.json 文件，请先运行 SFT 训练")
+        raise FileNotFoundError("未找到 history.json 文件，请先运行 SFT 训练")
 
     # 按修改时间排序，返回最新的
     latest = max(history_files, key=lambda p: p.stat().st_mtime)
@@ -69,13 +69,13 @@ def find_latest_history(output_dir: str = "outputs/coldstart_sft") -> Tuple[Path
 
 def load_json(path: Path) -> dict:
     """加载 JSON 文件"""
-    with open(path, "r") as f:
+    with open(path) as f:
         return json.load(f)
 
 
 def plot_sft_curves(
     history: dict,
-    eval_history: Optional[dict],
+    eval_history: dict | None,
     output_path: Path,
     title_prefix: str = "",
 ):
@@ -89,8 +89,8 @@ def plot_sft_curves(
         title_prefix: 标题前缀
     """
     try:
-        import matplotlib.pyplot as plt
         import matplotlib
+        import matplotlib.pyplot as plt
         matplotlib.use('Agg')  # 无头模式，适合服务器
     except ImportError:
         print("Error: 请安装 matplotlib: pip install matplotlib")
@@ -159,7 +159,7 @@ def plot_sft_curves(
 
         # 标注 warmup 结束点
         max_lr = max(lr)
-        warmup_end_idx = next((i for i, l in enumerate(lr) if l >= max_lr * 0.99), len(lr) - 1)
+        warmup_end_idx = next((i for i, lr_val in enumerate(lr) if lr_val >= max_lr * 0.99), len(lr) - 1)
         if warmup_end_idx > 0 and warmup_end_idx < len(steps) - 1:
             ax2.axvline(x=steps[warmup_end_idx], color='red', linestyle='--', alpha=0.5, label='Warmup End')
             ax2.legend()
@@ -279,15 +279,15 @@ def plot_sft_curves(
 
 def plot_simple(
     history: dict,
-    eval_history: Optional[dict],
+    eval_history: dict | None,
     output_path: Path,
 ):
     """
     绘制简洁版曲线（Loss + Thinking Rate）
     """
     try:
-        import matplotlib.pyplot as plt
         import matplotlib
+        import matplotlib.pyplot as plt
         matplotlib.use('Agg')
     except ImportError:
         print("Error: 请安装 matplotlib: pip install matplotlib")
@@ -329,7 +329,7 @@ def plot_simple(
 
         # 合并图例
         lines = line1 + line2
-        labels = [l.get_label() for l in lines]
+        labels = [line.get_label() for line in lines]
         ax1.legend(lines, labels, loc='upper right')
     else:
         ax1.legend(loc='upper right')
@@ -353,7 +353,7 @@ def plot_simple(
     plt.close()
 
 
-def print_summary(history: dict, eval_history: Optional[dict]):
+def print_summary(history: dict, eval_history: dict | None):
     """打印训练摘要"""
     steps = history.get("step", [])
     loss = history.get("loss", [])

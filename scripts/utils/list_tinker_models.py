@@ -9,6 +9,7 @@
 import os
 import sys
 
+
 def main():
     # 检查API Key（只是提示，不强制）
     api_key = os.getenv("TINKER_API_KEY")
@@ -82,7 +83,7 @@ def main():
         try:
             import tinker
             print("正在连接Tinker服务...")
-            client = tinker.ServiceClient()
+            tinker.ServiceClient()
             print("✓ Tinker连接成功")
             print()
             print("注意: 实际可用模型可能因账户权限而异")

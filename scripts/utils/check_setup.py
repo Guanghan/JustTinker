@@ -9,10 +9,9 @@ Usage:
 """
 
 import sys
-from typing import List, Tuple
 
 
-def check_package(name: str, import_name: str = None) -> Tuple[bool, str]:
+def check_package(name: str, import_name: str = None) -> tuple[bool, str]:
     """检查包是否安装"""
     import_name = import_name or name
     try:
@@ -73,19 +72,19 @@ def main():
     if tinker_key:
         print(f"  TINKER_API_KEY      ✓ set ({tinker_key[:8]}...)")
     else:
-        print(f"  TINKER_API_KEY      ○ not set")
+        print("  TINKER_API_KEY      ○ not set")
 
     wandb_key = os.environ.get("WANDB_API_KEY")
     if wandb_key:
-        print(f"  WANDB_API_KEY       ✓ set")
+        print("  WANDB_API_KEY       ✓ set")
     else:
-        print(f"  WANDB_API_KEY       ○ not set")
+        print("  WANDB_API_KEY       ○ not set")
 
     hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
     if hf_token:
-        print(f"  HF_TOKEN            ✓ set")
+        print("  HF_TOKEN            ✓ set")
     else:
-        print(f"  HF_TOKEN            ○ not set")
+        print("  HF_TOKEN            ○ not set")
 
     print()
     print("GPU Information:")
@@ -94,14 +93,14 @@ def main():
         import torch
         if torch.cuda.is_available():
             num_gpus = torch.cuda.device_count()
-            print(f"  CUDA Available      ✓")
+            print("  CUDA Available      ✓")
             print(f"  Number of GPUs      {num_gpus}")
             for i in range(num_gpus):
                 name = torch.cuda.get_device_name(i)
                 memory = torch.cuda.get_device_properties(i).total_memory / 1e9
                 print(f"    GPU {i}: {name} ({memory:.1f} GB)")
         else:
-            print(f"  CUDA Available      ✗ No GPU detected")
+            print("  CUDA Available      ✗ No GPU detected")
     except Exception as e:
         print(f"  Error checking GPU: {e}")
 

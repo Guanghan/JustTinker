@@ -37,18 +37,18 @@ Author: Guanghan Ning
 Date: 2025-01-10
 """
 
-import os
-import sys
-import re
-import json
-import random
 import argparse
+import json
+import os
+import random
+import re
+import sys
 import time
+from collections import defaultdict
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from dataclasses import dataclass, asdict
-from typing import List, Dict, Optional, Any, Tuple
-from collections import defaultdict
+from typing import Any, Optional
 
 # Tinker imports
 try:
@@ -63,7 +63,7 @@ except ImportError:
 try:
     from tinker_cookbook import renderers as tinker_renderers
     from tinker_cookbook import tokenizer_utils as tinker_tokenizer_utils
-    from tinker_cookbook.supervised.data import conversation_to_datum, TrainOnWhat
+    from tinker_cookbook.supervised.data import TrainOnWhat, conversation_to_datum
     # 尝试导入正确的函数名
     try:
         from tinker_cookbook.supervised.common import datum_from_model_input_weights
@@ -88,6 +88,18 @@ except ImportError as e:
 # 添加项目根目录到path
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+# ============================================================
+# 从 src 模块导入公共组件
+# 注意：这些导入是可选的，脚本中保留了内联实现以确保兼容性
+# 未来可以逐步迁移到使用 src 模块的实现
+# ============================================================
+try:
+    from src.configs import SFTConfig as _SFTConfig
+    from src.data import load_openr1_dataset as _load_openr1_dataset
+    HAS_SRC_MODULES = True
+except ImportError:
+    HAS_SRC_MODULES = False
 
 
 # ============================================================
@@ -118,7 +130,7 @@ class SFTConfig:
 
     # 数据设置
     max_seq_length: int = 8192  # 包含 prompt + response（过滤超长样本）
-    max_samples: Optional[int] = None  # 限制样本数
+    max_samples: int | None = None  # 限制样本数
     dataset_config: str = "default"  # default, extended, all
 
     # 日志和保存
@@ -190,11 +202,11 @@ class SFTConfig:
 
 def load_openr1_dataset(
     config: str = "default",
-    max_samples: Optional[int] = None,
+    max_samples: int | None = None,
     seed: int = 42,
     tokenizer: Any = None,
     max_seq_length: int = 8192,
-) -> Tuple[List[Dict], List[Dict]]:
+) -> tuple[list[dict], list[dict]]:
     """
     加载 OpenR1-Math-220k 数据集
 
@@ -250,11 +262,10 @@ def load_openr1_dataset(
         selected_response = None
         for i, gen in enumerate(generations):
             is_correct = correctness[i] if i < len(correctness) else False
-            if is_correct and gen:
-                # 检查是否包含 <think> 格式
-                if "<think>" in gen and "</think>" in gen:
-                    selected_response = gen
-                    break
+            # 检查是否正确且包含 <think> 格式
+            if is_correct and gen and "<think>" in gen and "</think>" in gen:
+                selected_response = gen
+                break
 
         # 如果没有正确的，选择第一个有 thinking 格式的
         if selected_response is None:
@@ -324,7 +335,7 @@ def load_openr1_dataset(
     return train_data, eval_data
 
 
-def _get_mock_data(n: int, seed: int) -> Tuple[List[Dict], List[Dict]]:
+def _get_mock_data(n: int, seed: int) -> tuple[list[dict], list[dict]]:
     """生成模拟数据用于测试"""
     random.seed(seed)
 
@@ -458,7 +469,7 @@ class SFTTrainer:
         self,
         problem: str,
         response: str,
-    ) -> Optional[tinker.Datum]:
+    ) -> tinker.Datum | None:
         """
         使用 tinker_cookbook 创建 SFT Datum
 
@@ -486,8 +497,8 @@ class SFTTrainer:
 
     def _create_datum_manual(
         self,
-        messages: List[Dict],
-    ) -> Optional[tinker.Datum]:
+        messages: list[dict],
+    ) -> tinker.Datum | None:
         """
         手动创建 SFT Datum
 
@@ -593,8 +604,8 @@ class SFTTrainer:
 
     def train_step(
         self,
-        batch: List[Dict],
-    ) -> Optional[Dict[str, float]]:
+        batch: list[dict],
+    ) -> dict[str, float] | None:
         """
         执行一个训练步骤（可能包含梯度累积）
 
@@ -704,7 +715,7 @@ class SFTTrainer:
         with open(self.run_dir / "eval_history.json", "w") as f:
             json.dump(dict(self.eval_history), f, indent=2)
 
-    def record_eval(self, eval_stats: Dict[str, Any]):
+    def record_eval(self, eval_stats: dict[str, Any]):
         """记录评估结果到历史"""
         self.eval_history["step"].append(self.global_step)
         self.eval_history["thinking_rate"].append(eval_stats["thinking_rate"])
@@ -715,9 +726,9 @@ class SFTTrainer:
 
     def evaluate(
         self,
-        eval_data: List[Dict],
+        eval_data: list[dict],
         sampling_client: Any,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         评估模型：检查是否能正确生成 thinking 格式
 
@@ -980,7 +991,7 @@ def main():
 
     print(f"  检查前 {valid_count + invalid_count} 个样本: {valid_count} 个有效, {invalid_count} 个无效")
     if invalid_count > 0:
-        print(f"  [Warning] 部分样本将被跳过")
+        print("  [Warning] 部分样本将被跳过")
 
     # 训练循环
     print("\n开始训练...")
@@ -1061,7 +1072,7 @@ def main():
     sampling_client = training_client.save_weights_and_get_sampling_client(name="final")
     final_eval = trainer.evaluate(eval_data[:config.eval_samples], sampling_client)
 
-    print(f"\n最终评估:")
+    print("\n最终评估:")
     print(f"  Thinking Rate: {final_eval['thinking_rate']:.1%}")
     print(f"  Boxed Rate: {final_eval['boxed_rate']:.1%}")
 

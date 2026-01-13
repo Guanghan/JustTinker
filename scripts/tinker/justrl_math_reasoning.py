@@ -27,17 +27,17 @@ Date: 2025-01-10
 Reference: https://arxiv.org/abs/2512.16649
 """
 
-import os
-import sys
-import json
-import random
 import argparse
+import json
+import os
+import random
+import sys
 import time
+from collections import defaultdict
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from dataclasses import dataclass, asdict
-from typing import List, Dict, Optional, Any
-from collections import defaultdict
+from typing import Any, Optional
 
 # Tinker imports
 try:
@@ -60,6 +60,39 @@ except ImportError:
 # 添加项目根目录到path
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+# ============================================================
+# 从 src 模块导入公共组件
+# 注意：这些导入是可选的，脚本中保留了内联实现以确保兼容性
+# 未来可以逐步迁移到使用 src 模块的实现
+# ============================================================
+try:
+    from src.configs import RLConfig as _RLConfig
+    from src.data import (
+        extract_boxed_answer as _extract_boxed_answer,
+    )
+    from src.data import (
+        load_aime_dataset as _load_aime_dataset,
+    )
+    from src.data import (
+        load_dapo_math_dataset as _load_dapo_math_dataset,
+    )
+    from src.data import (
+        load_math_dataset as _load_math_dataset,
+    )
+    from src.evaluation import MathVerifier as _MathVerifier
+    from src.prompts import (
+        format_prompt_manual_template as _format_prompt_manual_template,
+    )
+    from src.prompts import (
+        format_prompt_with_tokenizer as _format_prompt_with_tokenizer,
+    )
+    from src.prompts import (
+        is_base_model as _is_base_model,
+    )
+    HAS_SRC_MODULES = True
+except ImportError:
+    HAS_SRC_MODULES = False
 
 
 # ============================================================
@@ -116,8 +149,8 @@ class ReasoningConfig:
 
     # 数据集设置
     train_dataset: str = "dapo-math-17k"  # 训练数据集: "math" 或 "dapo-math-17k"
-    eval_datasets: List[str] = None  # 评估数据集列表，默认 ["math", "aime-2024"]
-    math_subjects: Optional[List[str]] = None  # None表示所有科目 (仅 math 数据集)
+    eval_datasets: list[str] = None  # 评估数据集列表，默认 ["math", "aime-2024"]
+    math_subjects: list[str] | None = None  # None表示所有科目 (仅 math 数据集)
 
     # 输出设置
     output_dir: str = "outputs/justrl_reasoning"
@@ -174,11 +207,11 @@ class ReasoningConfig:
 
 def load_math_dataset(
     split: str = "train",
-    max_samples: Optional[int] = None,
-    subjects: Optional[List[str]] = None,
+    max_samples: int | None = None,
+    subjects: list[str] | None = None,
     stratified: bool = True,
     seed: int = 42,
-) -> List[Dict]:
+) -> list[dict]:
     """
     加载MATH数据集 (EleutherAI/hendrycks_math)
 
@@ -364,9 +397,9 @@ def _extract_boxed_answer(solution: str) -> str:
 
 
 def load_dapo_math_dataset(
-    max_samples: Optional[int] = None,
+    max_samples: int | None = None,
     seed: int = 42,
-) -> List[Dict]:
+) -> list[dict]:
     """
     加载 DAPO-Math-17k 数据集 (BytedTsinghua-SIA/DAPO-Math-17k)
 
@@ -427,7 +460,7 @@ def load_dapo_math_dataset(
                     "source": "dapo-math-17k",
                     "data_source": item.get("data_source", "unknown"),
                 })
-        except Exception as e:
+        except Exception:
             continue
 
     print(f"  有效样本: {len(samples)} 条")
@@ -458,7 +491,7 @@ def load_dapo_math_dataset(
 def load_aime_dataset(
     year: str = "2024",
     seed: int = 42,
-) -> List[Dict]:
+) -> list[dict]:
     """
     加载 AIME 数据集 (HuggingFaceH4/aime_2024)
 
@@ -525,7 +558,7 @@ def load_aime_dataset(
     return samples
 
 
-def _get_mock_math_data(n: int) -> List[Dict]:
+def _get_mock_math_data(n: int) -> list[dict]:
     """生成模拟的MATH数据用于测试"""
     mock_problems = [
         {
@@ -586,9 +619,7 @@ def is_base_model(model_name: str) -> bool:
     if "base" in model_lower:
         return True
     # Llama-3.2-1B, Llama-3.2-3B 等没有后缀的是base model
-    if "llama" in model_lower and not any(kw in model_lower for kw in instruct_keywords):
-        return True
-    return False
+    return bool("llama" in model_lower and not any(kw in model_lower for kw in instruct_keywords))
 
 
 def format_prompt_for_base_model(problem: str, reasoning_mode: bool = False) -> str:
@@ -814,7 +845,7 @@ class MathReasoningVerifier:
         self.redundancy_weight = redundancy_weight
         self.redundancy_threshold = redundancy_threshold
 
-    def has_thinking_format(self, tokens: List[int] = None, text: str = None) -> bool:
+    def has_thinking_format(self, tokens: list[int] = None, text: str = None) -> bool:
         """
         检查是否使用了 thinking 格式
 
@@ -937,7 +968,7 @@ class MathReasoningVerifier:
 
         return sum(similarities) / len(similarities)
 
-    def compute_redundancy(self, text: str) -> Dict[str, float]:
+    def compute_redundancy(self, text: str) -> dict[str, float]:
         """
         综合计算文本冗余度
 
@@ -1100,10 +1131,10 @@ class MathReasoningVerifier:
 
         return answer
 
-    def extract_answer(self, text: str) -> Optional[str]:
+    def extract_answer(self, text: str) -> str | None:
         """从response中提取答案"""
         # 优先匹配 \boxed{...} - 使用递归方法处理嵌套大括号
-        def find_boxed_content(s: str) -> Optional[str]:
+        def find_boxed_content(s: str) -> str | None:
             """递归提取 \boxed{} 内容，正确处理嵌套大括号"""
             # 找所有 \boxed{ 的位置
             starts = []
@@ -1158,7 +1189,7 @@ class MathReasoningVerifier:
         """尝试数值比较，处理分数、π、√ 等"""
         import math
 
-        def try_eval(s: str) -> Optional[float]:
+        def try_eval(s: str) -> float | None:
             """尝试将字符串转为数值"""
             if not s:
                 return None
@@ -1219,8 +1250,13 @@ class MathReasoningVerifier:
         """使用 SymPy 进行符号比较（作为 fallback）"""
         try:
             import warnings
-            from sympy import simplify, sympify, N, Symbol
-            from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application
+
+            from sympy import N, Symbol, simplify, sympify
+            from sympy.parsing.sympy_parser import (
+                implicit_multiplication_application,
+                parse_expr,
+                standard_transformations,
+            )
         except ImportError:
             return False
 
@@ -1241,12 +1277,12 @@ class MathReasoningVerifier:
 
             try:
                 return parse_expr(s, transformations=transformations)
-            except:
+            except Exception:
                 pass
 
             try:
                 return sympify(s)
-            except:
+            except Exception:
                 pass
 
             return None
@@ -1270,17 +1306,17 @@ class MathReasoningVerifier:
                 # 数值比较
                 val_diff = abs(complex(N(diff)))
                 return val_diff < 1e-6
-            except:
+            except Exception:
                 return False
 
     def verify(
         self,
         response: str,
         gold: str,
-        tokens: List[int] = None,
+        tokens: list[int] = None,
         check_format: bool = True,
         check_redundancy: bool = True,
-    ) -> Dict:
+    ) -> dict:
         """
         验证答案并计算奖励
 
@@ -1474,12 +1510,12 @@ class ReasoningTrainer:
         tokens = self.tokenizer.encode(prompt_text, add_special_tokens=False)
         return tinker.ModelInput.from_ints(tokens)
 
-    def get_prompt_tokens(self, problem: str) -> List[int]:
+    def get_prompt_tokens(self, problem: str) -> list[int]:
         """获取prompt的token列表"""
         model_input = self.format_prompt(problem)
         return model_input.to_ints()
 
-    def compute_advantages(self, rewards: List[float]) -> List[float]:
+    def compute_advantages(self, rewards: list[float]) -> list[float]:
         """计算组内归一化的advantages"""
         import numpy as np
         rewards_arr = np.array(rewards)
@@ -1487,7 +1523,7 @@ class ReasoningTrainer:
         advantages = rewards_arr - mean
         return advantages.tolist()
 
-    def get_stop_sequences(self) -> List[int]:
+    def get_stop_sequences(self) -> list[int]:
         """
         获取停止序列（token IDs）
 
@@ -1507,7 +1543,7 @@ class ReasoningTrainer:
             ]
         return []
 
-    def parse_response(self, tokens: List[int]) -> Dict[str, Any]:
+    def parse_response(self, tokens: list[int]) -> dict[str, Any]:
         """
         解析模型响应
 
@@ -1534,10 +1570,10 @@ class ReasoningTrainer:
 
     def train_step(
         self,
-        problems: List[str],
-        gold_answers: List[str],
+        problems: list[str],
+        gold_answers: list[str],
         sampling_client: Any,
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """执行一个训练步骤"""
         self.global_step += 1
         step_start = time.time()
@@ -1571,7 +1607,7 @@ class ReasoningTrainer:
             futures.append(future)
 
         # 统一等待并处理结果
-        for future, (prompt_tokens, prompt_length) in zip(futures, prompt_data):
+        for future, (prompt_tokens, prompt_length) in zip(futures, prompt_data, strict=False):
             result = future.result()
 
             samples = []
@@ -1605,7 +1641,7 @@ class ReasoningTrainer:
         total_redundancy_penalty = 0.0
         total_chunk_similarity = 0.0
 
-        for samples, gold in zip(all_samples, gold_answers):
+        for samples, gold in zip(all_samples, gold_answers, strict=False):
             rewards = []
             for sample in samples:
                 # 传递 tokens 以检查 thinking 格式和冗余度
@@ -1633,9 +1669,9 @@ class ReasoningTrainer:
             all_rewards.append(rewards)
 
         # 计算advantages
-        for samples, rewards in zip(all_samples, all_rewards):
+        for samples, rewards in zip(all_samples, all_rewards, strict=False):
             advantages = self.compute_advantages(rewards)
-            for sample, adv in zip(samples, advantages):
+            for sample, adv in zip(samples, advantages, strict=False):
                 sample["advantage"] = adv
 
         # 收集positive advantage样本
@@ -1700,7 +1736,7 @@ class ReasoningTrainer:
                     "clip_high_threshold": self.config.clip_ratio_high,
                 }
             )
-            fwd_bwd_result = fwd_bwd_future.result()
+            fwd_bwd_future.result()
 
             self.training_client.optim_step(
                 tinker.AdamParams(learning_rate=self.config.learning_rate)
@@ -1759,10 +1795,10 @@ class ReasoningTrainer:
 
     def evaluate(
         self,
-        problems: List[str],
-        gold_answers: List[str],
+        problems: list[str],
+        gold_answers: list[str],
         sampling_client: Any,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """评估模型"""
         import tinker
 
@@ -1794,7 +1830,7 @@ class ReasoningTrainer:
         correct = 0
         eval_samples = []
 
-        for i, (future, gold) in enumerate(zip(futures, gold_answers)):
+        for i, (future, gold) in enumerate(zip(futures, gold_answers, strict=False)):
             sample_result = future.result()
 
             tokens = None
@@ -1850,7 +1886,7 @@ class ReasoningTrainer:
 # ============================================================
 
 def print_eval_samples(
-    samples: List[Dict],
+    samples: list[dict],
     num_correct: int = 1,
     num_incorrect: int = 2,
     max_response_len: int = 800,
@@ -1895,7 +1931,7 @@ def print_eval_samples(
     print("-" * 60 + "\n")
 
 
-def save_eval_samples(samples: List[Dict], filepath: Path, step: int):
+def save_eval_samples(samples: list[dict], filepath: Path, step: int):
     """保存评估样本到JSON文件"""
     data = {
         "step": step,
@@ -2018,7 +2054,7 @@ def main():
     print(f"模型定价: ${price_per_m_tokens}/M tokens")
     print(f"预估成本: ~${estimated_cost:.0f}")
     if config.reasoning_mode:
-        print(f"  (Reasoning模式输出更长，成本较高)")
+        print("  (Reasoning模式输出更长，成本较高)")
     print("=" * 60)
 
     # 加载训练数据
