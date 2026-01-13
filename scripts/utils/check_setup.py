@@ -68,6 +68,7 @@ def main():
     print("Environment Variables:")
     print("-" * 40)
     import os
+
     tinker_key = os.environ.get("TINKER_API_KEY")
     if tinker_key:
         print(f"  TINKER_API_KEY      ✓ set ({tinker_key[:8]}...)")
@@ -91,6 +92,7 @@ def main():
     print("-" * 40)
     try:
         import torch
+
         if torch.cuda.is_available():
             num_gpus = torch.cuda.device_count()
             print("  CUDA Available      ✓")

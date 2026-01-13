@@ -82,6 +82,7 @@ def main():
     if has_api_key:
         try:
             import tinker
+
             print("正在连接Tinker服务...")
             tinker.ServiceClient()
             print("✓ Tinker连接成功")
@@ -98,6 +99,7 @@ def main():
         print("      export TINKER_API_KEY=your_key")
 
     print()
+
 
 if __name__ == "__main__":
     main()

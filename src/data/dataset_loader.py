@@ -26,6 +26,7 @@ from typing import Any, Optional
 @dataclass
 class Sample:
     """数据样本"""
+
     question: str
     answer: str
     solution: str | None = None
@@ -35,6 +36,7 @@ class Sample:
 # ============================================================
 # 答案提取辅助函数
 # ============================================================
+
 
 def extract_boxed_answer(solution: str) -> str:
     """
@@ -65,14 +67,14 @@ def extract_boxed_answer(solution: str) -> str:
         i = start
 
         while i < len(solution) and depth > 0:
-            if solution[i] == '{':
+            if solution[i] == "{":
                 depth += 1
-            elif solution[i] == '}':
+            elif solution[i] == "}":
                 depth -= 1
             i += 1
 
         if depth == 0:
-            return solution[start:i-1]  # 不包含最后的 }
+            return solution[start : i - 1]  # 不包含最后的 }
 
     # 方法2: 找 \boxed X 格式（无括号，如 \boxed 2）
     # 匹配 \boxed 后跟空格和内容（到行尾、句号或$符号为止）
@@ -87,11 +89,8 @@ def extract_boxed_answer(solution: str) -> str:
 # GSM8K 数据集
 # ============================================================
 
-def load_gsm8k(
-    split: str = "train",
-    max_samples: int | None = None,
-    cache_dir: str | None = None
-) -> list[dict]:
+
+def load_gsm8k(split: str = "train", max_samples: int | None = None, cache_dir: str | None = None) -> list[dict]:
     """
     加载GSM8K数据集
 
@@ -129,12 +128,14 @@ def load_gsm8k(
         final_answer = parts[-1].strip().replace(",", "") if len(parts) > 1 else answer_text
         solution = parts[0].strip() if len(parts) > 1 else None
 
-        samples.append({
-            "question": item["question"],
-            "answer": final_answer,
-            "solution": solution,
-            "source": "gsm8k",
-        })
+        samples.append(
+            {
+                "question": item["question"],
+                "answer": final_answer,
+                "solution": solution,
+                "source": "gsm8k",
+            }
+        )
 
         if max_samples and len(samples) >= max_samples:
             break
@@ -146,6 +147,7 @@ def load_gsm8k(
 # ============================================================
 # MATH 数据集 (EleutherAI/hendrycks_math)
 # ============================================================
+
 
 def load_math_dataset(
     split: str = "train",
@@ -242,27 +244,31 @@ def load_math_dataset(
             # 采样
             sampled = data[:subject_sample_count]
             for item in sampled:
-                samples.append({
-                    "problem": item.get("problem", ""),
-                    "solution": item.get("solution", ""),
-                    "answer": extract_boxed_answer(item.get("solution", "")),
-                    "subject": subject,
-                    "level": item.get("level", "unknown"),
-                    "source": "math",
-                })
+                samples.append(
+                    {
+                        "problem": item.get("problem", ""),
+                        "solution": item.get("solution", ""),
+                        "answer": extract_boxed_answer(item.get("solution", "")),
+                        "subject": subject,
+                        "level": item.get("level", "unknown"),
+                        "source": "math",
+                    }
+                )
     else:
         # 简单采样：合并后打乱
         all_items = []
         for subject, data in subject_data.items():
             for item in data:
-                all_items.append({
-                    "problem": item.get("problem", ""),
-                    "solution": item.get("solution", ""),
-                    "answer": extract_boxed_answer(item.get("solution", "")),
-                    "subject": subject,
-                    "level": item.get("level", "unknown"),
-                    "source": "math",
-                })
+                all_items.append(
+                    {
+                        "problem": item.get("problem", ""),
+                        "solution": item.get("solution", ""),
+                        "answer": extract_boxed_answer(item.get("solution", "")),
+                        "subject": subject,
+                        "level": item.get("level", "unknown"),
+                        "source": "math",
+                    }
+                )
 
         random.shuffle(all_items)
 
@@ -339,7 +345,7 @@ def _get_mock_math_data(n: int) -> list[dict]:
     samples = []
     for i in range(n):
         sample = mock_problems[i % len(mock_problems)].copy()
-        sample["solution"] = f"Solution for problem {i+1}"
+        sample["solution"] = f"Solution for problem {i + 1}"
         sample["source"] = "mock"
         samples.append(sample)
 
@@ -349,6 +355,7 @@ def _get_mock_math_data(n: int) -> list[dict]:
 # ============================================================
 # DAPO-Math-17k 数据集
 # ============================================================
+
 
 def load_dapo_math_dataset(
     max_samples: int | None = None,
@@ -411,12 +418,14 @@ def load_dapo_math_dataset(
             answer = reward_model.get("ground_truth", "")
 
             if problem and answer:
-                samples.append({
-                    "problem": problem,
-                    "answer": str(answer).strip(),
-                    "source": "dapo-math-17k",
-                    "data_source": item.get("data_source", "unknown"),
-                })
+                samples.append(
+                    {
+                        "problem": problem,
+                        "answer": str(answer).strip(),
+                        "source": "dapo-math-17k",
+                        "data_source": item.get("data_source", "unknown"),
+                    }
+                )
         except Exception:
             continue
 
@@ -448,6 +457,7 @@ def load_dapo_math_dataset(
 # ============================================================
 # AIME 数据集
 # ============================================================
+
 
 def load_aime_dataset(
     year: str = "2024",
@@ -509,13 +519,15 @@ def load_aime_dataset(
         answer = item.get("answer", "")
 
         if problem and answer:
-            samples.append({
-                "problem": problem,
-                "answer": str(answer).strip(),
-                "source": f"aime-{year}",
-                "solution": item.get("solution", ""),
-                "url": item.get("url", ""),
-            })
+            samples.append(
+                {
+                    "problem": problem,
+                    "answer": str(answer).strip(),
+                    "source": f"aime-{year}",
+                    "solution": item.get("solution", ""),
+                    "url": item.get("url", ""),
+                }
+            )
 
     print(f"  有效样本: {len(samples)} 条")
 
@@ -525,6 +537,7 @@ def load_aime_dataset(
 # ============================================================
 # OpenR1-Math-220k 数据集 (SFT 训练用)
 # ============================================================
+
 
 def load_openr1_dataset(
     config: str = "default",
@@ -614,9 +627,7 @@ def load_openr1_dataset(
                 {"role": "user", "content": user_msg},
             ]
             try:
-                prompt_text = tokenizer.apply_chat_template(
-                    messages, tokenize=False, add_generation_prompt=True
-                )
+                prompt_text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
                 prompt_tokens = tokenizer.encode(prompt_text, add_special_tokens=False)
                 response_tokens = tokenizer.encode(selected_response, add_special_tokens=False)
                 total_length = len(prompt_tokens) + len(response_tokens)
@@ -628,12 +639,14 @@ def load_openr1_dataset(
                 # tokenizer 失败时不过滤
                 pass
 
-        samples.append({
-            "problem": problem,
-            "response": selected_response,
-            "source": item.get("source", "unknown"),
-            "problem_type": item.get("problem_type", "unknown"),
-        })
+        samples.append(
+            {
+                "problem": problem,
+                "response": selected_response,
+                "source": item.get("source", "unknown"),
+                "problem_type": item.get("problem_type", "unknown"),
+            }
+        )
 
         if max_samples and len(samples) >= max_samples:
             break
@@ -733,12 +746,13 @@ The area is $\\boxed{25\\pi}$ square units.""",
 # Countdown 游戏数据
 # ============================================================
 
+
 def generate_countdown_data(
     num_samples: int = 1000,
     num_numbers: int = 4,
     target_range: tuple[int, int] = (10, 100),
     number_range: tuple[int, int] = (1, 10),
-    seed: int = 42
+    seed: int = 42,
 ) -> list[dict]:
     """
     生成Countdown游戏数据
@@ -779,13 +793,15 @@ def generate_countdown_data(
             f"Show your calculation steps."
         )
 
-        samples.append({
-            "question": question,
-            "answer": str(target),
-            "source": "countdown",
-            "numbers": numbers,
-            "target": target,
-        })
+        samples.append(
+            {
+                "question": question,
+                "answer": str(target),
+                "source": "countdown",
+                "numbers": numbers,
+                "target": target,
+            }
+        )
 
     return samples
 
@@ -793,6 +809,7 @@ def generate_countdown_data(
 # ============================================================
 # 统一数据加载器
 # ============================================================
+
 
 class DataLoader:
     """
@@ -808,19 +825,11 @@ class DataLoader:
 
     def __init__(self, dataset_name: str, cache_dir: str | None = None):
         if dataset_name not in self.SUPPORTED_DATASETS:
-            raise ValueError(
-                f"Unsupported dataset: {dataset_name}. "
-                f"Supported: {self.SUPPORTED_DATASETS}"
-            )
+            raise ValueError(f"Unsupported dataset: {dataset_name}. Supported: {self.SUPPORTED_DATASETS}")
         self.dataset_name = dataset_name
         self.cache_dir = cache_dir
 
-    def load(
-        self,
-        split: str = "train",
-        max_samples: int | None = None,
-        **kwargs
-    ) -> list[dict]:
+    def load(self, split: str = "train", max_samples: int | None = None, **kwargs) -> list[dict]:
         """加载数据集"""
         if self.dataset_name == "gsm8k":
             return load_gsm8k(split, max_samples, self.cache_dir)
@@ -862,7 +871,7 @@ if __name__ == "__main__":
     print("\n测试 Countdown 生成...")
     samples = generate_countdown_data(num_samples=3)
     for i, s in enumerate(samples):
-        print(f"  样本 {i+1}: {s['question'][:80]}...")
+        print(f"  样本 {i + 1}: {s['question'][:80]}...")
         print(f"    目标: {s['answer']}")
 
     # 测试 boxed 提取

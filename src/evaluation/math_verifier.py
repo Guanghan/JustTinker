@@ -96,7 +96,7 @@ class MathVerifier:
         if len(text) < 100:
             return 0.0
 
-        text_bytes = text.encode('utf-8')
+        text_bytes = text.encode("utf-8")
         compressed = self.zlib.compress(text_bytes, level=9)
 
         # 压缩比 = compressed_size / original_size
@@ -125,7 +125,7 @@ class MathVerifier:
         if len(words) < n * 2:
             return 0.0
 
-        ngrams = [tuple(words[i:i+n]) for i in range(len(words) - n + 1)]
+        ngrams = [tuple(words[i : i + n]) for i in range(len(words) - n + 1)]
         if not ngrams:
             return 0.0
 
@@ -152,7 +152,7 @@ class MathVerifier:
 
         # 切分成 chunks（50% overlap 以捕捉边界情况）
         step = chunk_size // 2
-        chunks = [text[i:i+chunk_size] for i in range(0, len(text) - chunk_size + 1, step)]
+        chunks = [text[i : i + chunk_size] for i in range(0, len(text) - chunk_size + 1, step)]
 
         if len(chunks) < 2:
             return 0.0
@@ -161,7 +161,7 @@ class MathVerifier:
             """获取 k-character shingles"""
             if len(s) < shingle_k:
                 return set()
-            return set(s[i:i+shingle_k] for i in range(len(s) - shingle_k + 1))
+            return set(s[i : i + shingle_k] for i in range(len(s) - shingle_k + 1))
 
         # 计算相邻 chunk 的 Jaccard 相似度
         similarities = []
@@ -246,7 +246,7 @@ class MathVerifier:
 
         # 2. 处理货币符号
         answer = answer.replace("\\$", "")  # LaTeX 转义的美元符号
-        answer = answer.replace("$", "")     # 普通美元符号
+        answer = answer.replace("$", "")  # 普通美元符号
 
         # 3. 处理百分号
         answer = answer.replace("\\%", "%")  # 统一为普通百分号
@@ -305,16 +305,65 @@ class MathVerifier:
 
         # 11. 移除常见单位 (JustRL 风格)
         units = [
-            "centimeter", "centimeters", "cm",
-            "millimeter", "millimeters", "mm",
-            "meter", "meters", "m",
-            "kilometer", "kilometers", "km",
-            "inch", "inches", "ft", "feet", "foot", "yard", "yards", "mile", "miles",
-            "kilogram", "kilograms", "kg", "gram", "grams", "g", "mg", "lb", "lbs", "oz", "ounce", "ounces",
-            "liter", "liters", "ml", "gallon", "gallons",
-            "second", "seconds", "sec", "minute", "minutes", "min", "hour", "hours", "hr", "day", "days",
-            "dollar", "dollars", "cent", "cents", "euro", "euros",
-            "square", "cubic", "sq", "cu",
+            "centimeter",
+            "centimeters",
+            "cm",
+            "millimeter",
+            "millimeters",
+            "mm",
+            "meter",
+            "meters",
+            "m",
+            "kilometer",
+            "kilometers",
+            "km",
+            "inch",
+            "inches",
+            "ft",
+            "feet",
+            "foot",
+            "yard",
+            "yards",
+            "mile",
+            "miles",
+            "kilogram",
+            "kilograms",
+            "kg",
+            "gram",
+            "grams",
+            "g",
+            "mg",
+            "lb",
+            "lbs",
+            "oz",
+            "ounce",
+            "ounces",
+            "liter",
+            "liters",
+            "ml",
+            "gallon",
+            "gallons",
+            "second",
+            "seconds",
+            "sec",
+            "minute",
+            "minutes",
+            "min",
+            "hour",
+            "hours",
+            "hr",
+            "day",
+            "days",
+            "dollar",
+            "dollars",
+            "cent",
+            "cents",
+            "euro",
+            "euros",
+            "square",
+            "cubic",
+            "sq",
+            "cu",
         ]
         for unit in units:
             # 移除数字后面的单位 (如 "5cm" -> "5")
@@ -348,6 +397,7 @@ class MathVerifier:
 
     def extract_answer(self, text: str) -> str | None:
         """从response中提取答案"""
+
         # 优先匹配 \boxed{...} - 使用递归方法处理嵌套大括号
         def find_boxed_content(s: str) -> str | None:
             """递归提取 \\boxed{} 内容，正确处理嵌套大括号"""
@@ -372,14 +422,14 @@ class MathVerifier:
             depth = 1
             i = brace_start
             while i < len(s) and depth > 0:
-                if s[i] == '{':
+                if s[i] == "{":
                     depth += 1
-                elif s[i] == '}':
+                elif s[i] == "}":
                     depth -= 1
                 i += 1
 
             if depth == 0:
-                return s[brace_start:i-1]
+                return s[brace_start : i - 1]
             return None
 
         boxed = find_boxed_content(text)
@@ -431,9 +481,9 @@ class MathVerifier:
             pi_match = self.re.match(r"^(-?\d*\.?\d*)π$", s)
             if pi_match:
                 coef = pi_match.group(1)
-                if coef == '' or coef == '+':
+                if coef == "" or coef == "+":
                     coef = 1.0
-                elif coef == '-':
+                elif coef == "-":
                     coef = -1.0
                 else:
                     coef = float(coef)
@@ -497,6 +547,7 @@ class MathVerifier:
 
             try:
                 from sympy import sympify
+
                 return sympify(s)
             except Exception:
                 pass
@@ -696,6 +747,7 @@ class BatchVerifier:
 # ============================================================
 # 测试
 # ============================================================
+
 
 def test_verifier():
     """测试验证器"""

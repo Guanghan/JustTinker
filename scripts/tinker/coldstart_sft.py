@@ -45,10 +45,10 @@ import re
 import sys
 import time
 from collections import defaultdict
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 # Tinker imports
 try:
@@ -64,9 +64,11 @@ try:
     from tinker_cookbook import renderers as tinker_renderers
     from tinker_cookbook import tokenizer_utils as tinker_tokenizer_utils
     from tinker_cookbook.supervised.data import TrainOnWhat, conversation_to_datum
+
     # 尝试导入正确的函数名
     try:
         from tinker_cookbook.supervised.common import datum_from_model_input_weights
+
         datum_from_tokens_weights = datum_from_model_input_weights  # 别名兼容
     except ImportError:
         try:
@@ -91,319 +93,14 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 # ============================================================
 # 从 src 模块导入公共组件
-# 注意：这些导入是可选的，脚本中保留了内联实现以确保兼容性
-# 未来可以逐步迁移到使用 src 模块的实现
 # ============================================================
-try:
-    from src.configs import SFTConfig as _SFTConfig
-    from src.data import load_openr1_dataset as _load_openr1_dataset
-    HAS_SRC_MODULES = True
-except ImportError:
-    HAS_SRC_MODULES = False
-
-
-# ============================================================
-# 配置
-# ============================================================
-
-@dataclass
-class SFTConfig:
-    """Cold Start SFT 配置"""
-
-    # 实验设置
-    experiment_name: str = "coldstart_sft"
-    scale: str = "small"  # quick, small, medium, large
-    seed: int = 42
-
-    # 模型设置
-    model_name: str = "Qwen/Qwen3-4B-Instruct-2507"
-    lora_rank: int = 128 #64
-
-    # 训练设置（根据 scale 调整）
-    num_steps: int = 1000
-    batch_size: int = 4
-    gradient_accumulation: int = 4  # 有效 batch = batch_size * gradient_accumulation
-
-    # 优化器设置
-    learning_rate: float = 2e-5  # SFT 通常用较大的 lr
-    warmup_steps: int = 100
-
-    # 数据设置
-    max_seq_length: int = 8192  # 包含 prompt + response（过滤超长样本）
-    max_samples: int | None = None  # 限制样本数
-    dataset_config: str = "default"  # default, extended, all
-
-    # 日志和保存
-    log_interval: int = 10
-    save_interval: int = 200
-    eval_interval: int = 100
-    eval_samples: int = 50
-
-    # 输出设置
-    output_dir: str = "outputs/coldstart_sft"
-
-    def __post_init__(self):
-        """根据 scale 调整参数"""
-        scale_configs = {
-            "quick": {
-                "num_steps": 10,
-                "batch_size": 2,
-                "gradient_accumulation": 1,
-                "warmup_steps": 2,  # 快速测试不需要长 warmup
-                "log_interval": 2,
-                "save_interval": 10,
-                "eval_interval": 5,
-                "eval_samples": 10,
-                "max_samples": 100,
-            },
-            "small": {
-                "num_steps": 800,
-                "batch_size": 8,
-                "gradient_accumulation": 2,
-                "warmup_steps": 50,
-                "log_interval": 10,
-                "save_interval": 100,
-                "eval_interval": 50,
-                "eval_samples": 30,
-                "max_samples": 10000,
-            },
-            "medium": {
-                "num_steps": 2000,
-                "batch_size": 8,
-                "gradient_accumulation": 4,
-                "warmup_steps": 100,
-                "log_interval": 20,
-                "save_interval": 200,
-                "eval_interval": 100,
-                "eval_samples": 50,
-                "max_samples": 50000,
-            },
-            "large": {
-                "num_steps": 5000,
-                "batch_size": 4,
-                "gradient_accumulation": 8,
-                "warmup_steps": 200,
-                "log_interval": 50,
-                "save_interval": 500,
-                "eval_interval": 200,
-                "eval_samples": 100,
-                "max_samples": None,  # 使用全部数据
-            },
-        }
-
-        if self.scale in scale_configs:
-            for key, value in scale_configs[self.scale].items():
-                setattr(self, key, value)
-
-
-# ============================================================
-# 数据加载
-# ============================================================
-
-def load_openr1_dataset(
-    config: str = "default",
-    max_samples: int | None = None,
-    seed: int = 42,
-    tokenizer: Any = None,
-    max_seq_length: int = 8192,
-) -> tuple[list[dict], list[dict]]:
-    """
-    加载 OpenR1-Math-220k 数据集
-
-    Args:
-        config: 数据集配置 (default, extended, all)
-        max_samples: 最大样本数
-        seed: 随机种子
-        tokenizer: 用于计算 token 长度的 tokenizer（可选）
-        max_seq_length: 最大序列长度，超过此长度的样本将被过滤
-
-    Returns:
-        train_data, eval_data
-    """
-    try:
-        from datasets import load_dataset
-    except ImportError:
-        print("Error: 请安装 datasets 库: pip install datasets")
-        sys.exit(1)
-
-    print(f"加载 OpenR1-Math-220k ({config})...")
-
-    try:
-        dataset = load_dataset("open-r1/OpenR1-Math-220k", config, split="train")
-    except Exception as e:
-        print(f"Error: 加载数据集失败: {e}")
-        print("尝试使用模拟数据...")
-        return _get_mock_data(max_samples or 100, seed)
-
-    print(f"  原始数据: {len(dataset)} 个问题")
-
-    # 如果提供了 tokenizer，用于过滤超长样本
-    system_msg = "You are a helpful mathematical assistant. Think step by step before answering."
-    filter_by_length = tokenizer is not None
-
-    if filter_by_length:
-        print(f"  启用长度过滤: max_seq_length={max_seq_length}")
-
-    # 处理数据：每个问题可能有多个 generations
-    samples = []
-    skipped_no_think = 0
-    skipped_too_long = 0
-
-    for item in dataset:
-        problem = item.get("problem", "")
-        generations = item.get("generations", [])
-        correctness = item.get("correctness_math_verify", [])
-
-        if not problem or not generations:
-            skipped_no_think += 1
-            continue
-
-        # 选择一个正确的 generation
-        selected_response = None
-        for i, gen in enumerate(generations):
-            is_correct = correctness[i] if i < len(correctness) else False
-            # 检查是否正确且包含 <think> 格式
-            if is_correct and gen and "<think>" in gen and "</think>" in gen:
-                selected_response = gen
-                break
-
-        # 如果没有正确的，选择第一个有 thinking 格式的
-        if selected_response is None:
-            for gen in generations:
-                if gen and "<think>" in gen and "</think>" in gen:
-                    selected_response = gen
-                    break
-
-        if selected_response is None:
-            skipped_no_think += 1
-            continue
-
-        # 长度过滤
-        if filter_by_length:
-            user_msg = f"Solve the following math problem.\n\nProblem: {problem}"
-            messages = [
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": user_msg},
-            ]
-            try:
-                prompt_text = tokenizer.apply_chat_template(
-                    messages, tokenize=False, add_generation_prompt=True
-                )
-                prompt_tokens = tokenizer.encode(prompt_text, add_special_tokens=False)
-                response_tokens = tokenizer.encode(selected_response, add_special_tokens=False)
-                total_length = len(prompt_tokens) + len(response_tokens)
-
-                if total_length > max_seq_length:
-                    skipped_too_long += 1
-                    continue
-            except Exception:
-                # tokenizer 失败时不过滤
-                pass
-
-        samples.append({
-            "problem": problem,
-            "response": selected_response,
-            "source": item.get("source", "unknown"),
-            "problem_type": item.get("problem_type", "unknown"),
-        })
-
-        if max_samples and len(samples) >= max_samples:
-            break
-
-    print(f"  有效样本: {len(samples)}")
-    print(f"  跳过（无 thinking 格式）: {skipped_no_think}")
-    if filter_by_length:
-        print(f"  跳过（超过 {max_seq_length} tokens）: {skipped_too_long}")
-
-    # 打乱并分割
-    random.seed(seed)
-    random.shuffle(samples)
-
-    # 90% train, 10% eval
-    split_idx = int(len(samples) * 0.9)
-    train_data = samples[:split_idx]
-    eval_data = samples[split_idx:]
-
-    print(f"  训练集: {len(train_data)}, 评估集: {len(eval_data)}")
-
-    # 统计 source 分布
-    source_counts = defaultdict(int)
-    for s in train_data:
-        source_counts[s["source"]] += 1
-    print(f"  数据来源分布: {dict(source_counts)}")
-
-    return train_data, eval_data
-
-
-def _get_mock_data(n: int, seed: int) -> tuple[list[dict], list[dict]]:
-    """生成模拟数据用于测试"""
-    random.seed(seed)
-
-    mock_samples = [
-        {
-            "problem": "What is 123 + 456?",
-            "response": """<think>
-I need to add 123 and 456.
-Let me break this down:
-- 123 + 456
-- First, 3 + 6 = 9
-- Then, 20 + 50 = 70
-- Finally, 100 + 400 = 500
-- Total: 500 + 70 + 9 = 579
-</think>
-
-The answer is $\\boxed{579}$.""",
-            "source": "mock",
-            "problem_type": "Algebra",
-        },
-        {
-            "problem": "Solve for x: 2x + 5 = 13",
-            "response": """<think>
-I need to solve the equation 2x + 5 = 13.
-Step 1: Subtract 5 from both sides.
-2x + 5 - 5 = 13 - 5
-2x = 8
-Step 2: Divide both sides by 2.
-2x / 2 = 8 / 2
-x = 4
-Let me verify: 2(4) + 5 = 8 + 5 = 13. Correct!
-</think>
-
-The solution is $x = \\boxed{4}$.""",
-            "source": "mock",
-            "problem_type": "Algebra",
-        },
-        {
-            "problem": "What is the area of a circle with radius 5?",
-            "response": """<think>
-I need to find the area of a circle with radius 5.
-The formula for the area of a circle is A = πr².
-Given r = 5:
-A = π × 5²
-A = π × 25
-A = 25π
-</think>
-
-The area is $\\boxed{25\\pi}$ square units.""",
-            "source": "mock",
-            "problem_type": "Geometry",
-        },
-    ]
-
-    # 扩展到 n 个样本
-    samples = []
-    for i in range(n):
-        sample = mock_samples[i % len(mock_samples)].copy()
-        samples.append(sample)
-
-    # 分割
-    split_idx = int(len(samples) * 0.9)
-    return samples[:split_idx], samples[split_idx:]
-
+from src.configs import SFTConfig
+from src.data import load_openr1_dataset
 
 # ============================================================
 # SFT Trainer
 # ============================================================
+
 
 class SFTTrainer:
     """
@@ -445,7 +142,7 @@ class SFTTrainer:
                 self.tokenizer = tinker_tokenizer_utils.get_tokenizer(model_name)
                 # SFT 时使用 qwen3 renderer (enable_thinking=True)
                 # 这样生成的 prompt 末尾会有 <think>
-                self.renderer = tinker_renderers.get_renderer('qwen3', self.tokenizer)
+                self.renderer = tinker_renderers.get_renderer("qwen3", self.tokenizer)
                 print("Tokenizer 和 Renderer 加载完成 (thinking mode)")
                 return
             except Exception as e:
@@ -454,6 +151,7 @@ class SFTTrainer:
         # 回退到 HuggingFace
         try:
             from transformers import AutoTokenizer
+
             print(f"使用 HuggingFace 加载 tokenizer: {model_name}")
             self.tokenizer = AutoTokenizer.from_pretrained(
                 model_name,
@@ -519,7 +217,7 @@ class SFTTrainer:
         response_clean = response_content.strip()
         if not response_clean.startswith("<think>"):
             # 调试：显示 response 实际开头
-            if not hasattr(self, '_debug_skip_count'):
+            if not hasattr(self, "_debug_skip_count"):
                 self._debug_skip_count = 0
             if self._debug_skip_count < 3:
                 print(f"  [Debug] Response 不以 <think> 开头: {repr(response_clean[:50])}")
@@ -548,7 +246,7 @@ class SFTTrainer:
         think_token_id = self.tokenizer.encode("<think>", add_special_tokens=False)[0]
         if response_tokens[0] != think_token_id:
             # 调试：显示实际的第一个 token
-            if not hasattr(self, '_debug_token_count'):
+            if not hasattr(self, "_debug_token_count"):
                 self._debug_token_count = 0
             if self._debug_token_count < 3:
                 first_token = response_tokens[0]
@@ -564,7 +262,7 @@ class SFTTrainer:
 
         # 截断
         if len(full_tokens) > self.config.max_seq_length:
-            full_tokens = full_tokens[:self.config.max_seq_length]
+            full_tokens = full_tokens[: self.config.max_seq_length]
             if len(full_tokens) <= prompt_length:
                 return None
 
@@ -583,7 +281,7 @@ class SFTTrainer:
                 )
                 return datum
             except Exception as e:
-                if not hasattr(self, '_datum_error_shown'):
+                if not hasattr(self, "_datum_error_shown"):
                     print(f"Warning: datum_from_tokens_weights failed: {e}, using fallback")
                     self._datum_error_shown = True
 
@@ -595,10 +293,8 @@ class SFTTrainer:
         datum = tinker.Datum(
             model_input=model_input,
             loss_fn_inputs={
-                "weights": tinker.TensorData.from_torch(
-                    torch.tensor(shifted_weights, dtype=torch.float32)
-                ),
-            }
+                "weights": tinker.TensorData.from_torch(torch.tensor(shifted_weights, dtype=torch.float32)),
+            },
         )
         return datum
 
@@ -647,16 +343,16 @@ class SFTTrainer:
         # 累积 loss
         # Tinker 的 loss_fn_outputs 是一个列表，每个元素包含 'elementwise_loss'
         batch_loss = 0.0
-        if hasattr(fwd_bwd_result, 'loss_fn_outputs') and fwd_bwd_result.loss_fn_outputs:
+        if hasattr(fwd_bwd_result, "loss_fn_outputs") and fwd_bwd_result.loss_fn_outputs:
             outputs = fwd_bwd_result.loss_fn_outputs
             if isinstance(outputs, list):
                 # 计算每个样本的平均 loss，然后取 batch 平均
                 sample_losses = []
                 for sample_output in outputs:
-                    if isinstance(sample_output, dict) and 'elementwise_loss' in sample_output:
-                        elem_loss = sample_output['elementwise_loss']
+                    if isinstance(sample_output, dict) and "elementwise_loss" in sample_output:
+                        elem_loss = sample_output["elementwise_loss"]
                         # elem_loss 可能是 TensorData，需要提取数据
-                        if hasattr(elem_loss, 'data'):
+                        if hasattr(elem_loss, "data"):
                             loss_values = elem_loss.data
                         else:
                             loss_values = elem_loss
@@ -681,9 +377,7 @@ class SFTTrainer:
                 lr = self.config.learning_rate
 
             # Optimizer step
-            self.training_client.optim_step(
-                tinker.AdamParams(learning_rate=lr)
-            )
+            self.training_client.optim_step(tinker.AdamParams(learning_rate=lr))
 
             # 记录统计
             avg_loss = self.accumulated_loss / self.accumulation_count
@@ -807,19 +501,21 @@ class SFTTrainer:
                 thinking_length = 0
                 if has_thinking:
                     # 提取 <think>...</think> 之间的内容
-                    think_match = re.search(r'<think>(.*?)</think>', response_text, re.DOTALL)
+                    think_match = re.search(r"<think>(.*?)</think>", response_text, re.DOTALL)
                     if think_match:
                         thinking_length = len(think_match.group(1))
                 total_thinking_length += thinking_length
 
-                results.append({
-                    "problem": sample["problem"][:100],
-                    "response": response_text[:500],
-                    "has_thinking": has_thinking,
-                    "has_boxed": has_boxed,
-                    "response_length": response_length,
-                    "thinking_length": thinking_length,
-                })
+                results.append(
+                    {
+                        "problem": sample["problem"][:100],
+                        "response": response_text[:500],
+                        "has_thinking": has_thinking,
+                        "has_boxed": has_boxed,
+                        "response_length": response_length,
+                        "thinking_length": thinking_length,
+                    }
+                )
 
         total = len(results)
         return {
@@ -836,22 +532,24 @@ class SFTTrainer:
 # 主训练循环
 # ============================================================
 
+
 def main():
     parser = argparse.ArgumentParser(description="Cold Start SFT for Thinking Mode")
-    parser.add_argument("--scale", type=str, default="small",
-                        choices=["quick", "small", "medium", "large"],
-                        help="训练规模")
-    parser.add_argument("--model", type=str, default="Qwen/Qwen3-4B-Instruct-2507",
-                        help="基座模型")
-    parser.add_argument("--dataset-config", type=str, default="default",
-                        choices=["default", "extended", "all"],
-                        help="OpenR1-Math-220k 配置")
-    parser.add_argument("--lr", type=float, default=2e-5,
-                        help="学习率")
+    parser.add_argument(
+        "--scale", type=str, default="small", choices=["quick", "small", "medium", "large"], help="训练规模"
+    )
+    parser.add_argument("--model", type=str, default="Qwen/Qwen3-4B-Instruct-2507", help="基座模型")
+    parser.add_argument(
+        "--dataset-config",
+        type=str,
+        default="default",
+        choices=["default", "extended", "all"],
+        help="OpenR1-Math-220k 配置",
+    )
+    parser.add_argument("--lr", type=float, default=2e-5, help="学习率")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output-dir", type=str, default="outputs/coldstart_sft")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="干运行模式")
+    parser.add_argument("--dry-run", action="store_true", help="干运行模式")
     args = parser.parse_args()
 
     # 检查 API Key
@@ -889,7 +587,9 @@ def main():
     print(f"Max samples: {config.max_samples}")
     print(f"Max seq length: {config.max_seq_length} (超长样本将被过滤)")
     print(f"Steps: {config.num_steps}")
-    print(f"Batch size: {config.batch_size} x {config.gradient_accumulation} = {config.batch_size * config.gradient_accumulation}")
+    print(
+        f"Batch size: {config.batch_size} x {config.gradient_accumulation} = {config.batch_size * config.gradient_accumulation}"
+    )
     print(f"Learning rate: {config.learning_rate}")
     print(f"Output: {run_dir}")
     print("=" * 60)
@@ -912,16 +612,15 @@ def main():
     print("\n加载 tokenizer 用于数据过滤...")
     try:
         from transformers import AutoTokenizer
-        filter_tokenizer = AutoTokenizer.from_pretrained(
-            config.model_name, trust_remote_code=True
-        )
+
+        filter_tokenizer = AutoTokenizer.from_pretrained(config.model_name, trust_remote_code=True)
         print(f"  Tokenizer 加载成功: {config.model_name}")
     except Exception as e:
         print(f"  Warning: Tokenizer 加载失败: {e}")
         print("  将跳过长度过滤")
         filter_tokenizer = None
 
-    # 加载数据（带长度过滤）
+    # 加载数据（使用 src.data 模块）
     train_data, eval_data = load_openr1_dataset(
         config=config.dataset_config,
         max_samples=config.max_samples,
@@ -936,7 +635,7 @@ def main():
         # 测试数据格式化
         if HAS_TINKER_COOKBOOK:
             tokenizer = tinker_tokenizer_utils.get_tokenizer(config.model_name)
-            renderer = tinker_renderers.get_renderer('qwen3', tokenizer)
+            renderer = tinker_renderers.get_renderer("qwen3", tokenizer)
 
             sample = train_data[0]
             print("\n" + "=" * 60)
@@ -949,7 +648,10 @@ def main():
 
             # 构建 prompt
             messages = [
-                {"role": "system", "content": "You are a helpful mathematical assistant. Think step by step before answering."},
+                {
+                    "role": "system",
+                    "content": "You are a helpful mathematical assistant. Think step by step before answering.",
+                },
                 {"role": "user", "content": f"Solve the following math problem.\n\nProblem: {sample['problem']}"},
             ]
             model_input = renderer.build_generation_prompt(messages)
@@ -980,7 +682,7 @@ def main():
     print("\n验证训练数据格式...")
     valid_count = 0
     invalid_count = 0
-    for sample in train_data[:min(100, len(train_data))]:  # 检查前100个样本
+    for sample in train_data[: min(100, len(train_data))]:  # 检查前100个样本
         response = sample["response"].strip()
         if response.startswith("<think>"):
             valid_count += 1
@@ -1022,10 +724,12 @@ def main():
             # 日志
             if trainer.global_step % config.log_interval == 0:
                 avg_time = sum(step_times[-10:]) / len(step_times[-10:])
-                print(f"Step {stats['step']}/{config.num_steps} | "
-                      f"Loss: {stats['loss']:.4f} | "
-                      f"LR: {stats['lr']:.2e} | "
-                      f"Time: {avg_time:.1f}s")
+                print(
+                    f"Step {stats['step']}/{config.num_steps} | "
+                    f"Loss: {stats['loss']:.4f} | "
+                    f"LR: {stats['lr']:.2e} | "
+                    f"Time: {avg_time:.1f}s"
+                )
                 # 保存训练历史（每次 log 时保存）
                 trainer.save_history()
 
@@ -1034,10 +738,12 @@ def main():
                 sampling_client = training_client.save_weights_and_get_sampling_client(
                     name=f"step_{trainer.global_step}"
                 )
-                eval_stats = trainer.evaluate(eval_data[:config.eval_samples], sampling_client)
+                eval_stats = trainer.evaluate(eval_data[: config.eval_samples], sampling_client)
 
-                print(f"  [Eval] Thinking Rate: {eval_stats['thinking_rate']:.1%} | "
-                      f"Boxed Rate: {eval_stats['boxed_rate']:.1%}")
+                print(
+                    f"  [Eval] Thinking Rate: {eval_stats['thinking_rate']:.1%} | "
+                    f"Boxed Rate: {eval_stats['boxed_rate']:.1%}"
+                )
 
                 # 显示样本
                 if eval_stats["samples"]:
@@ -1070,7 +776,7 @@ def main():
 
     # 最终评估
     sampling_client = training_client.save_weights_and_get_sampling_client(name="final")
-    final_eval = trainer.evaluate(eval_data[:config.eval_samples], sampling_client)
+    final_eval = trainer.evaluate(eval_data[: config.eval_samples], sampling_client)
 
     print("\n最终评估:")
     print(f"  Thinking Rate: {final_eval['thinking_rate']:.1%}")
@@ -1082,7 +788,7 @@ def main():
     # 显示几个样本
     print("\n样本检查:")
     for i, sample in enumerate(final_eval["samples"][:3]):
-        print(f"\n  样本 {i+1}:")
+        print(f"\n  样本 {i + 1}:")
         print(f"    问题: {sample['problem'][:80]}...")
         print(f"    has_thinking: {sample['has_thinking']}, has_boxed: {sample['has_boxed']}")
         print(f"    回答: {sample['response'][:300]}...")

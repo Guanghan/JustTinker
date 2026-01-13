@@ -208,9 +208,7 @@ class RLConfig(BaseConfig):
                 "medium": 15360,
                 "high": 20480,
             }
-            self.max_response_length = thinking_budgets.get(
-                self.thinking_budget, 15360
-            )
+            self.max_response_length = thinking_budgets.get(self.thinking_budget, 15360)
 
         # 设置默认评估数据集
         if not self.eval_datasets:

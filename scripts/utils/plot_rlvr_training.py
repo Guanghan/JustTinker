@@ -8,10 +8,10 @@
 
     # 指定具体的history.json文件
     python scripts/plot_training.py outputs/justrl/justrl_gsm8k_20260110_123456/history.json
-    
+
     # 只生成简洁的accuracy曲线
     python scripts/plot_training.py --simple
-    
+
     # 指定输出目录
     python scripts/plot_training.py --output-dir outputs/plots
 
@@ -40,7 +40,7 @@ from pathlib import Path
 
 def find_latest_history() -> Path:
     """查找最新的history.json文件"""
-    #output_dir = Path("outputs/justrl")
+    # output_dir = Path("outputs/justrl")
     output_dir = Path("outputs/justrl_reasoning")
     if not output_dir.exists():
         raise FileNotFoundError(f"输出目录不存在: {output_dir}")
@@ -66,14 +66,15 @@ def plot_training_curves(history: dict, output_path: Path, title_prefix: str = "
     try:
         import matplotlib
         import matplotlib.pyplot as plt
-        matplotlib.use('Agg')  # 无头模式，适合服务器
+
+        matplotlib.use("Agg")  # 无头模式，适合服务器
     except ImportError:
         print("Error: 请安装matplotlib: pip install matplotlib")
         return
 
     # 设置中文字体（如果可用）
-    plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'SimHei', 'DejaVu Sans']
-    plt.rcParams['axes.unicode_minus'] = False
+    plt.rcParams["font.sans-serif"] = ["Arial Unicode MS", "SimHei", "DejaVu Sans"]
+    plt.rcParams["axes.unicode_minus"] = False
 
     # 获取数据
     steps = history.get("step", [])
@@ -100,59 +101,71 @@ def plot_training_curves(history: dict, output_path: Path, title_prefix: str = "
 
     # 创建图表 (4x2 = 8 个子图)
     fig, axes = plt.subplots(4, 2, figsize=(14, 18))
-    fig.suptitle(f"{title_prefix}JustRL Training Progress", fontsize=14, fontweight='bold')
+    fig.suptitle(f"{title_prefix}JustRL Training Progress", fontsize=14, fontweight="bold")
 
     # 1. Train Accuracy曲线 (DAPO-MATH-17K)
     ax1 = axes[0, 0]
     if accuracy:
-        ax1.plot(steps, accuracy, 'b-', linewidth=1.5, alpha=0.7, label='Train Accuracy')
-        ax1.fill_between(steps, accuracy, alpha=0.2, color='blue')
-        ax1.set_xlabel('Step')
-        ax1.set_ylabel('Accuracy')
-        ax1.set_title('Train Accuracy (DAPO-MATH-17K)')
+        ax1.plot(steps, accuracy, "b-", linewidth=1.5, alpha=0.7, label="Train Accuracy")
+        ax1.fill_between(steps, accuracy, alpha=0.2, color="blue")
+        ax1.set_xlabel("Step")
+        ax1.set_ylabel("Accuracy")
+        ax1.set_title("Train Accuracy (DAPO-MATH-17K)")
         ax1.set_ylim(0, 1)
         ax1.grid(True, alpha=0.3)
         ax1.legend()
         if len(accuracy) > 0:
-            ax1.annotate(f'{accuracy[-1]:.2%}',
-                        xy=(steps[-1], accuracy[-1]),
-                        xytext=(5, 5), textcoords='offset points',
-                        fontsize=10, color='blue')
+            ax1.annotate(
+                f"{accuracy[-1]:.2%}",
+                xy=(steps[-1], accuracy[-1]),
+                xytext=(5, 5),
+                textcoords="offset points",
+                fontsize=10,
+                color="blue",
+            )
 
     # 2. Eval MATH Accuracy 曲线
     ax2 = axes[0, 1]
     if eval_steps and eval_accuracy:
-        ax2.plot(eval_steps, eval_accuracy, 'r-o', linewidth=2, markersize=6, label='Eval MATH')
-        ax2.fill_between(eval_steps, eval_accuracy, alpha=0.2, color='red')
-        ax2.set_xlabel('Step')
-        ax2.set_ylabel('Accuracy')
-        ax2.set_title('Eval MATH Accuracy (200 samples, pass@1, temp=0.7)')
+        ax2.plot(eval_steps, eval_accuracy, "r-o", linewidth=2, markersize=6, label="Eval MATH")
+        ax2.fill_between(eval_steps, eval_accuracy, alpha=0.2, color="red")
+        ax2.set_xlabel("Step")
+        ax2.set_ylabel("Accuracy")
+        ax2.set_title("Eval MATH Accuracy (200 samples, pass@1, temp=0.7)")
         ax2.set_ylim(0, 1)
         ax2.grid(True, alpha=0.3)
         ax2.legend()
         # 标注起始值和最终值
         if len(eval_accuracy) > 0:
-            ax2.annotate(f'SFT: {eval_accuracy[0]:.2%}',
-                        xy=(eval_steps[0], eval_accuracy[0]),
-                        xytext=(10, -15), textcoords='offset points',
-                        fontsize=10, color='red')
-            ax2.annotate(f'Final: {eval_accuracy[-1]:.2%}',
-                        xy=(eval_steps[-1], eval_accuracy[-1]),
-                        xytext=(-60, 10), textcoords='offset points',
-                        fontsize=10, color='red')
+            ax2.annotate(
+                f"SFT: {eval_accuracy[0]:.2%}",
+                xy=(eval_steps[0], eval_accuracy[0]),
+                xytext=(10, -15),
+                textcoords="offset points",
+                fontsize=10,
+                color="red",
+            )
+            ax2.annotate(
+                f"Final: {eval_accuracy[-1]:.2%}",
+                xy=(eval_steps[-1], eval_accuracy[-1]),
+                xytext=(-60, 10),
+                textcoords="offset points",
+                fontsize=10,
+                color="red",
+            )
     else:
-        ax2.text(0.5, 0.5, 'No MATH eval data', ha='center', va='center', transform=ax2.transAxes)
-        ax2.set_title('Eval MATH Accuracy')
+        ax2.text(0.5, 0.5, "No MATH eval data", ha="center", va="center", transform=ax2.transAxes)
+        ax2.set_title("Eval MATH Accuracy")
 
     # 3. Eval AIME Accuracy 曲线
     ax3 = axes[1, 0]
     if eval_steps and eval_aime_accuracy and len(eval_aime_accuracy) > 0:
-        aime_eval_steps = eval_steps[-len(eval_aime_accuracy):]
-        ax3.plot(aime_eval_steps, eval_aime_accuracy, 'g-s', linewidth=2, markersize=6, label='Eval AIME')
-        ax3.fill_between(aime_eval_steps, eval_aime_accuracy, alpha=0.2, color='green')
-        ax3.set_xlabel('Step')
-        ax3.set_ylabel('Accuracy')
-        ax3.set_title('Eval AIME 2024 Accuracy (30 samples, pass@1, temp=0.7)')
+        aime_eval_steps = eval_steps[-len(eval_aime_accuracy) :]
+        ax3.plot(aime_eval_steps, eval_aime_accuracy, "g-s", linewidth=2, markersize=6, label="Eval AIME")
+        ax3.fill_between(aime_eval_steps, eval_aime_accuracy, alpha=0.2, color="green")
+        ax3.set_xlabel("Step")
+        ax3.set_ylabel("Accuracy")
+        ax3.set_title("Eval AIME 2024 Accuracy (30 samples, pass@1, temp=0.7)")
         # 动态调整y轴范围，让变化更明显
         min_acc = min(eval_aime_accuracy)
         max_acc = max(eval_aime_accuracy)
@@ -161,150 +174,211 @@ def plot_training_curves(history: dict, output_path: Path, title_prefix: str = "
         ax3.grid(True, alpha=0.3)
         ax3.legend()
         if len(eval_aime_accuracy) > 0:
-            ax3.annotate(f'SFT: {eval_aime_accuracy[0]:.2%}',
-                        xy=(aime_eval_steps[0], eval_aime_accuracy[0]),
-                        xytext=(10, -15), textcoords='offset points',
-                        fontsize=10, color='green')
-            ax3.annotate(f'Final: {eval_aime_accuracy[-1]:.2%}',
-                        xy=(aime_eval_steps[-1], eval_aime_accuracy[-1]),
-                        xytext=(-60, 10), textcoords='offset points',
-                        fontsize=10, color='green')
+            ax3.annotate(
+                f"SFT: {eval_aime_accuracy[0]:.2%}",
+                xy=(aime_eval_steps[0], eval_aime_accuracy[0]),
+                xytext=(10, -15),
+                textcoords="offset points",
+                fontsize=10,
+                color="green",
+            )
+            ax3.annotate(
+                f"Final: {eval_aime_accuracy[-1]:.2%}",
+                xy=(aime_eval_steps[-1], eval_aime_accuracy[-1]),
+                xytext=(-60, 10),
+                textcoords="offset points",
+                fontsize=10,
+                color="green",
+            )
             # 标注最高值
             max_aime_acc = max(eval_aime_accuracy)
             max_aime_idx = eval_aime_accuracy.index(max_aime_acc)
             max_aime_step = aime_eval_steps[max_aime_idx]
-            ax3.annotate(f'Best: {max_aime_acc:.2%}',
-                        xy=(max_aime_step, max_aime_acc),
-                        xytext=(0, 15), textcoords='offset points',
-                        fontsize=10, color='darkgreen', fontweight='bold',
-                        ha='center',
-                        arrowprops=dict(arrowstyle='->', color='darkgreen', lw=1.5))
+            ax3.annotate(
+                f"Best: {max_aime_acc:.2%}",
+                xy=(max_aime_step, max_aime_acc),
+                xytext=(0, 15),
+                textcoords="offset points",
+                fontsize=10,
+                color="darkgreen",
+                fontweight="bold",
+                ha="center",
+                arrowprops=dict(arrowstyle="->", color="darkgreen", lw=1.5),
+            )
     else:
-        ax3.text(0.5, 0.5, 'No AIME eval data', ha='center', va='center', transform=ax3.transAxes)
-        ax3.set_title('Eval AIME Accuracy')
+        ax3.text(0.5, 0.5, "No AIME eval data", ha="center", va="center", transform=ax3.transAxes)
+        ax3.set_title("Eval AIME Accuracy")
 
     # 4. Mean Reward曲线
     ax4 = axes[1, 1]
     if mean_reward:
-        ax4.plot(steps, mean_reward, 'g-', linewidth=1.5, label='Mean Reward')
-        ax4.fill_between(steps, mean_reward, alpha=0.3, color='green')
-        ax4.set_xlabel('Step')
-        ax4.set_ylabel('Mean Reward')
-        ax4.set_title('Mean Reward per Step')
+        ax4.plot(steps, mean_reward, "g-", linewidth=1.5, label="Mean Reward")
+        ax4.fill_between(steps, mean_reward, alpha=0.3, color="green")
+        ax4.set_xlabel("Step")
+        ax4.set_ylabel("Mean Reward")
+        ax4.set_title("Mean Reward per Step")
         ax4.set_ylim(0, 1)
         ax4.grid(True, alpha=0.3)
         ax4.legend()
         if len(mean_reward) > 0:
-            ax4.annotate(f'{mean_reward[-1]:.3f}',
-                        xy=(steps[-1], mean_reward[-1]),
-                        xytext=(5, 5), textcoords='offset points',
-                        fontsize=10, color='green')
+            ax4.annotate(
+                f"{mean_reward[-1]:.3f}",
+                xy=(steps[-1], mean_reward[-1]),
+                xytext=(5, 5),
+                textcoords="offset points",
+                fontsize=10,
+                color="green",
+            )
 
     # 5. Redundancy Metrics
     ax5 = axes[2, 0]
     if avg_redundancy_score:
-        ax5.plot(steps[:len(avg_redundancy_score)], avg_redundancy_score, 'red', linewidth=1.5, label='Redundancy Score')
-        ax5.axhline(y=0.3, color='orange', linestyle='--', alpha=0.7, label='Threshold (0.3)')
+        ax5.plot(
+            steps[: len(avg_redundancy_score)], avg_redundancy_score, "red", linewidth=1.5, label="Redundancy Score"
+        )
+        ax5.axhline(y=0.3, color="orange", linestyle="--", alpha=0.7, label="Threshold (0.3)")
         if avg_chunk_similarity:
-            ax5.plot(steps[:len(avg_chunk_similarity)], avg_chunk_similarity, 'purple', linewidth=1.5, alpha=0.7, label='Chunk Similarity')
-        ax5.set_xlabel('Step')
-        ax5.set_ylabel('Score')
-        ax5.set_title('Redundancy Metrics')
+            ax5.plot(
+                steps[: len(avg_chunk_similarity)],
+                avg_chunk_similarity,
+                "purple",
+                linewidth=1.5,
+                alpha=0.7,
+                label="Chunk Similarity",
+            )
+        ax5.set_xlabel("Step")
+        ax5.set_ylabel("Score")
+        ax5.set_title("Redundancy Metrics")
         ax5.set_ylim(0, 0.6)
         ax5.grid(True, alpha=0.3)
         ax5.legend()
         avg_red = sum(avg_redundancy_score) / len(avg_redundancy_score)
-        ax5.axhline(y=avg_red, color='red', linestyle=':', alpha=0.5)
-        ax5.annotate(f'Avg: {avg_red:.1%}', xy=(steps[len(avg_redundancy_score)-1], avg_red),
-                    xytext=(5, 5), textcoords='offset points', fontsize=9, color='red')
+        ax5.axhline(y=avg_red, color="red", linestyle=":", alpha=0.5)
+        ax5.annotate(
+            f"Avg: {avg_red:.1%}",
+            xy=(steps[len(avg_redundancy_score) - 1], avg_red),
+            xytext=(5, 5),
+            textcoords="offset points",
+            fontsize=9,
+            color="red",
+        )
     elif num_train_samples:
-        ax5.bar(steps, num_train_samples, alpha=0.7, color='orange', label='Positive Samples')
-        ax5.set_xlabel('Step')
-        ax5.set_ylabel('Count')
-        ax5.set_title('Positive Advantage Samples per Step')
-        ax5.grid(True, alpha=0.3, axis='y')
+        ax5.bar(steps, num_train_samples, alpha=0.7, color="orange", label="Positive Samples")
+        ax5.set_xlabel("Step")
+        ax5.set_ylabel("Count")
+        ax5.set_title("Positive Advantage Samples per Step")
+        ax5.grid(True, alpha=0.3, axis="y")
         ax5.legend()
     else:
-        ax5.text(0.5, 0.5, 'No redundancy data available',
-                ha='center', va='center', transform=ax5.transAxes, fontsize=12)
-        ax5.set_title('Redundancy Metrics')
+        ax5.text(
+            0.5, 0.5, "No redundancy data available", ha="center", va="center", transform=ax5.transAxes, fontsize=12
+        )
+        ax5.set_title("Redundancy Metrics")
 
     # 6. Step Time
     ax6 = axes[2, 1]
     if step_time:
-        ax6.plot(steps, step_time, 'r-', linewidth=1, alpha=0.7)
-        ax6.set_xlabel('Step')
-        ax6.set_ylabel('Time (seconds)')
-        ax6.set_title('Time per Step')
+        ax6.plot(steps, step_time, "r-", linewidth=1, alpha=0.7)
+        ax6.set_xlabel("Step")
+        ax6.set_ylabel("Time (seconds)")
+        ax6.set_title("Time per Step")
         ax6.grid(True, alpha=0.3)
         avg_time = sum(step_time) / len(step_time)
-        ax6.axhline(y=avg_time, color='r', linestyle='--', alpha=0.5, label=f'Avg: {avg_time:.1f}s')
+        ax6.axhline(y=avg_time, color="r", linestyle="--", alpha=0.5, label=f"Avg: {avg_time:.1f}s")
         ax6.legend()
 
     # 7. Thinking Rate (Train + Eval MATH + Eval AIME)
     ax7 = axes[3, 0]
     if thinking_rate:
-        ax7.plot(steps, thinking_rate, 'purple', linewidth=1.5, alpha=0.7, label='Train (DAPO)')
-        ax7.fill_between(steps, thinking_rate, alpha=0.2, color='purple')
+        ax7.plot(steps, thinking_rate, "purple", linewidth=1.5, alpha=0.7, label="Train (DAPO)")
+        ax7.fill_between(steps, thinking_rate, alpha=0.2, color="purple")
         # Eval MATH thinking rate
         if eval_steps and eval_thinking_rate:
-            ax7.plot(eval_steps, eval_thinking_rate, 'orange', linewidth=2, marker='o', markersize=4, label='Eval MATH')
+            ax7.plot(eval_steps, eval_thinking_rate, "orange", linewidth=2, marker="o", markersize=4, label="Eval MATH")
             if len(eval_thinking_rate) > 0:
-                ax7.annotate(f'{eval_thinking_rate[-1]:.0%}',
-                            xy=(eval_steps[-1], eval_thinking_rate[-1]),
-                            xytext=(5, -15), textcoords='offset points',
-                            fontsize=10, color='orange')
+                ax7.annotate(
+                    f"{eval_thinking_rate[-1]:.0%}",
+                    xy=(eval_steps[-1], eval_thinking_rate[-1]),
+                    xytext=(5, -15),
+                    textcoords="offset points",
+                    fontsize=10,
+                    color="orange",
+                )
         # Eval AIME thinking rate
         if eval_steps and eval_aime_thinking_rate and len(eval_aime_thinking_rate) > 0:
-            aime_eval_steps = eval_steps[-len(eval_aime_thinking_rate):]
-            ax7.plot(aime_eval_steps, eval_aime_thinking_rate, 'green', linewidth=2, marker='s', markersize=4, label='Eval AIME')
-            ax7.annotate(f'{eval_aime_thinking_rate[-1]:.0%}',
-                        xy=(aime_eval_steps[-1], eval_aime_thinking_rate[-1]),
-                        xytext=(5, 10), textcoords='offset points',
-                        fontsize=10, color='green')
-        ax7.set_xlabel('Step')
-        ax7.set_ylabel('Rate')
-        ax7.set_title('Thinking Token Usage Rate')
+            aime_eval_steps = eval_steps[-len(eval_aime_thinking_rate) :]
+            ax7.plot(
+                aime_eval_steps,
+                eval_aime_thinking_rate,
+                "green",
+                linewidth=2,
+                marker="s",
+                markersize=4,
+                label="Eval AIME",
+            )
+            ax7.annotate(
+                f"{eval_aime_thinking_rate[-1]:.0%}",
+                xy=(aime_eval_steps[-1], eval_aime_thinking_rate[-1]),
+                xytext=(5, 10),
+                textcoords="offset points",
+                fontsize=10,
+                color="green",
+            )
+        ax7.set_xlabel("Step")
+        ax7.set_ylabel("Rate")
+        ax7.set_title("Thinking Token Usage Rate")
         ax7.set_ylim(0, 1)
         ax7.grid(True, alpha=0.3)
         ax7.legend()
         if len(thinking_rate) > 0:
-            ax7.annotate(f'{thinking_rate[-1]:.0%}',
-                        xy=(steps[-1], thinking_rate[-1]),
-                        xytext=(5, 5), textcoords='offset points',
-                        fontsize=10, color='purple')
+            ax7.annotate(
+                f"{thinking_rate[-1]:.0%}",
+                xy=(steps[-1], thinking_rate[-1]),
+                xytext=(5, 5),
+                textcoords="offset points",
+                fontsize=10,
+                color="purple",
+            )
 
     # 8. Response Length (avg total + avg thinking)
     ax8 = axes[3, 1]
     if avg_response_length:
-        ax8.plot(steps, avg_response_length, 'steelblue', linewidth=1.5, label='Avg Response Length')
+        ax8.plot(steps, avg_response_length, "steelblue", linewidth=1.5, label="Avg Response Length")
         if avg_thinking_length:
-            ax8.plot(steps, avg_thinking_length, 'coral', linewidth=1.5, label='Avg Thinking Length')
-        ax8.set_xlabel('Step')
-        ax8.set_ylabel('Tokens')
-        ax8.set_title('Average Response & Thinking Length')
+            ax8.plot(steps, avg_thinking_length, "coral", linewidth=1.5, label="Avg Thinking Length")
+        ax8.set_xlabel("Step")
+        ax8.set_ylabel("Tokens")
+        ax8.set_title("Average Response & Thinking Length")
         ax8.grid(True, alpha=0.3)
         ax8.legend()
         if len(avg_response_length) > 0:
-            ax8.annotate(f'{avg_response_length[-1]:.0f}',
-                        xy=(steps[-1], avg_response_length[-1]),
-                        xytext=(5, 5), textcoords='offset points',
-                        fontsize=9, color='steelblue')
+            ax8.annotate(
+                f"{avg_response_length[-1]:.0f}",
+                xy=(steps[-1], avg_response_length[-1]),
+                xytext=(5, 5),
+                textcoords="offset points",
+                fontsize=9,
+                color="steelblue",
+            )
         if avg_thinking_length and len(avg_thinking_length) > 0:
-            ax8.annotate(f'{avg_thinking_length[-1]:.0f}',
-                        xy=(steps[-1], avg_thinking_length[-1]),
-                        xytext=(5, -15), textcoords='offset points',
-                        fontsize=9, color='coral')
+            ax8.annotate(
+                f"{avg_thinking_length[-1]:.0f}",
+                xy=(steps[-1], avg_thinking_length[-1]),
+                xytext=(5, -15),
+                textcoords="offset points",
+                fontsize=9,
+                color="coral",
+            )
 
     plt.tight_layout()
 
     # 保存图片
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
     print(f"图表已保存: {output_path}")
 
     # 同时保存PDF版本（高质量）
-    pdf_path = output_path.with_suffix('.pdf')
-    plt.savefig(pdf_path, bbox_inches='tight')
+    pdf_path = output_path.with_suffix(".pdf")
+    plt.savefig(pdf_path, bbox_inches="tight")
     print(f"PDF版本: {pdf_path}")
 
     plt.close()
@@ -315,7 +389,8 @@ def plot_accuracy_only(history: dict, output_path: Path):
     try:
         import matplotlib
         import matplotlib.pyplot as plt
-        matplotlib.use('Agg')
+
+        matplotlib.use("Agg")
     except ImportError:
         print("Error: 请安装matplotlib: pip install matplotlib")
         return
@@ -329,27 +404,35 @@ def plot_accuracy_only(history: dict, output_path: Path):
 
     fig, ax = plt.subplots(figsize=(10, 6))
 
-    ax.plot(steps, accuracy, 'b-', linewidth=2, marker='o', markersize=3)
+    ax.plot(steps, accuracy, "b-", linewidth=2, marker="o", markersize=3)
     ax.fill_between(steps, accuracy, alpha=0.2)
 
-    ax.set_xlabel('Training Step', fontsize=12)
-    ax.set_ylabel('Accuracy', fontsize=12)
-    ax.set_title('JustRL Training Accuracy', fontsize=14, fontweight='bold')
+    ax.set_xlabel("Training Step", fontsize=12)
+    ax.set_ylabel("Accuracy", fontsize=12)
+    ax.set_title("JustRL Training Accuracy", fontsize=14, fontweight="bold")
     ax.set_ylim(0, 1)
     ax.grid(True, alpha=0.3)
 
     # 标注起始和结束值
-    ax.annotate(f'Start: {accuracy[0]:.2%}',
-                xy=(steps[0], accuracy[0]),
-                xytext=(10, -20), textcoords='offset points',
-                fontsize=10, arrowprops=dict(arrowstyle='->', color='gray'))
-    ax.annotate(f'Final: {accuracy[-1]:.2%}',
-                xy=(steps[-1], accuracy[-1]),
-                xytext=(-60, 20), textcoords='offset points',
-                fontsize=10, arrowprops=dict(arrowstyle='->', color='gray'))
+    ax.annotate(
+        f"Start: {accuracy[0]:.2%}",
+        xy=(steps[0], accuracy[0]),
+        xytext=(10, -20),
+        textcoords="offset points",
+        fontsize=10,
+        arrowprops=dict(arrowstyle="->", color="gray"),
+    )
+    ax.annotate(
+        f"Final: {accuracy[-1]:.2%}",
+        xy=(steps[-1], accuracy[-1]),
+        xytext=(-60, 20),
+        textcoords="offset points",
+        fontsize=10,
+        arrowprops=dict(arrowstyle="->", color="gray"),
+    )
 
     plt.tight_layout()
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
     print(f"简洁版图表已保存: {output_path}")
     plt.close()
 
@@ -391,18 +474,20 @@ def print_summary(history: dict):
         print(f"Eval 次数: {len(eval_accuracy)}")
         print(f"初始 Eval 准确率: {eval_accuracy[0]:.2%} (Step {eval_steps[0]})")
         print(f"最终 Eval 准确率: {eval_accuracy[-1]:.2%} (Step {eval_steps[-1]})")
-        print(f"最高 Eval 准确率: {max(eval_accuracy):.2%} (Step {eval_steps[eval_accuracy.index(max(eval_accuracy))]})")
+        print(
+            f"最高 Eval 准确率: {max(eval_accuracy):.2%} (Step {eval_steps[eval_accuracy.index(max(eval_accuracy))]})"
+        )
 
     if eval_aime_accuracy:
         print("\n--- Eval AIME 指标 ---")
-        aime_eval_steps = eval_steps[-len(eval_aime_accuracy):]
+        aime_eval_steps = eval_steps[-len(eval_aime_accuracy) :]
         print(f"AIME Eval 次数: {len(eval_aime_accuracy)}")
         print(f"初始 AIME 准确率: {eval_aime_accuracy[0]:.2%} (Step {aime_eval_steps[0]})")
         print(f"最终 AIME 准确率: {eval_aime_accuracy[-1]:.2%} (Step {aime_eval_steps[-1]})")
         print(f"最高 AIME 准确率: {max(eval_aime_accuracy):.2%}")
 
     if mean_reward:
-        print(f"\n平均奖励: {sum(mean_reward)/len(mean_reward):.3f}")
+        print(f"\n平均奖励: {sum(mean_reward) / len(mean_reward):.3f}")
 
     print("\n--- Thinking Rate ---")
     if thinking_rate:
@@ -413,36 +498,33 @@ def print_summary(history: dict):
         print(f"Eval AIME: {eval_aime_thinking_rate[0]:.0%} → {eval_aime_thinking_rate[-1]:.0%}")
 
     if avg_response_length:
-        print(f"平均响应长度: {sum(avg_response_length)/len(avg_response_length):.0f} tokens")
+        print(f"平均响应长度: {sum(avg_response_length) / len(avg_response_length):.0f} tokens")
 
     if avg_thinking_length:
         valid_lengths = [length for length in avg_thinking_length if length > 0]
         if valid_lengths:
-            print(f"平均 Thinking 长度: {sum(valid_lengths)/len(valid_lengths):.0f} tokens")
+            print(f"平均 Thinking 长度: {sum(valid_lengths) / len(valid_lengths):.0f} tokens")
 
     if avg_redundancy_score:
         print("\n--- Redundancy 指标 ---")
-        print(f"平均 Redundancy Score: {sum(avg_redundancy_score)/len(avg_redundancy_score):.2%}")
+        print(f"平均 Redundancy Score: {sum(avg_redundancy_score) / len(avg_redundancy_score):.2%}")
         print(f"最终 Redundancy Score: {avg_redundancy_score[-1]:.2%}")
         if avg_chunk_similarity:
-            print(f"平均 Chunk Similarity: {sum(avg_chunk_similarity)/len(avg_chunk_similarity):.2%}")
+            print(f"平均 Chunk Similarity: {sum(avg_chunk_similarity) / len(avg_chunk_similarity):.2%}")
 
     if step_time:
         total_time = sum(step_time)
-        print(f"\n总训练时间: {total_time/60:.1f} 分钟")
-        print(f"平均每步时间: {total_time/len(step_time):.1f} 秒")
+        print(f"\n总训练时间: {total_time / 60:.1f} 分钟")
+        print(f"平均每步时间: {total_time / len(step_time):.1f} 秒")
 
     print("=" * 50)
 
 
 def main():
     parser = argparse.ArgumentParser(description="绘制JustRL训练曲线")
-    parser.add_argument("history_file", nargs="?", default=None,
-                        help="history.json文件路径（默认使用最新的）")
-    parser.add_argument("--output-dir", type=str, default=None,
-                        help="输出目录（默认与history.json同目录）")
-    parser.add_argument("--simple", action="store_true",
-                        help="只生成简洁的accuracy曲线")
+    parser.add_argument("history_file", nargs="?", default=None, help="history.json文件路径（默认使用最新的）")
+    parser.add_argument("--output-dir", type=str, default=None, help="输出目录（默认与history.json同目录）")
+    parser.add_argument("--simple", action="store_true", help="只生成简洁的accuracy曲线")
     args = parser.parse_args()
 
     # 找到history文件

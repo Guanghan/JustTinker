@@ -49,10 +49,12 @@ def load_gsm8k(split: str = "test", max_samples: int | None = None) -> list[dict
         parts = answer_text.split("####")
         final_answer = parts[-1].strip().replace(",", "") if len(parts) > 1 else answer_text
 
-        samples.append({
-            "question": item["question"],
-            "answer": final_answer,
-        })
+        samples.append(
+            {
+                "question": item["question"],
+                "answer": final_answer,
+            }
+        )
 
         if max_samples and len(samples) >= max_samples:
             break
@@ -64,16 +66,19 @@ def load_math_500(max_samples: int | None = None) -> list[dict]:
     """加载MATH-500子集"""
     try:
         from datasets import load_dataset
+
         dataset = load_dataset("HuggingFaceH4/MATH-500", split="test")
 
         samples = []
         for item in dataset:
-            samples.append({
-                "question": item["problem"],
-                "answer": item["answer"],
-                "level": item.get("level"),
-                "type": item.get("type"),
-            })
+            samples.append(
+                {
+                    "question": item["problem"],
+                    "answer": item["answer"],
+                    "level": item.get("level"),
+                    "type": item.get("type"),
+                }
+            )
 
             if max_samples and len(samples) >= max_samples:
                 break
@@ -99,6 +104,7 @@ class MathVerifier:
 
     def __init__(self):
         import re
+
         self.re = re
 
         self.patterns = [
@@ -250,17 +256,11 @@ def main():
     parser = argparse.ArgumentParser(description="数学推理模型评估")
     parser.add_argument("--checkpoint", type=str, help="Tinker checkpoint名称")
     parser.add_argument("--model", type=str, help="HuggingFace模型路径")
-    parser.add_argument("--dataset", type=str, default="gsm8k",
-                        choices=["gsm8k", "math500", "both"],
-                        help="评估数据集")
-    parser.add_argument("--max-samples", type=int, default=None,
-                        help="最大评估样本数")
-    parser.add_argument("--max-tokens", type=int, default=4096,
-                        help="最大生成token数")
-    parser.add_argument("--temperature", type=float, default=0.0,
-                        help="采样温度（0=greedy）")
-    parser.add_argument("--output", type=str, default=None,
-                        help="结果输出文件")
+    parser.add_argument("--dataset", type=str, default="gsm8k", choices=["gsm8k", "math500", "both"], help="评估数据集")
+    parser.add_argument("--max-samples", type=int, default=None, help="最大评估样本数")
+    parser.add_argument("--max-tokens", type=int, default=4096, help="最大生成token数")
+    parser.add_argument("--temperature", type=float, default=0.0, help="采样温度（0=greedy）")
+    parser.add_argument("--output", type=str, default=None, help="结果输出文件")
     args = parser.parse_args()
 
     if not args.checkpoint and not args.model:
@@ -328,16 +328,17 @@ def main():
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # 移除详细results以减小文件大小
-    summary = {
-        name: {k: v for k, v in result.items() if k != "results"}
-        for name, result in all_results.items()
-    }
+    summary = {name: {k: v for k, v in result.items() if k != "results"} for name, result in all_results.items()}
 
     with open(output_path, "w") as f:
-        json.dump({
-            "args": vars(args),
-            "summary": summary,
-        }, f, indent=2)
+        json.dump(
+            {
+                "args": vars(args),
+                "summary": summary,
+            },
+            f,
+            indent=2,
+        )
 
     print(f"\n结果已保存到: {output_path}")
 
