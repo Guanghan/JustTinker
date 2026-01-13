@@ -84,7 +84,9 @@ class ReasoningConfig:
     # Reasoning模式设置
     reasoning_mode: bool = False  # 是否启用thinking mode
     thinking_budget: str = "medium"  # thinking token预算: low, medium, high
-    format_reward_weight: float = 0  # 格式奖励权重：没有thinking时的惩罚
+    format_reward_weight: float = 0.1  # 格式奖励权重：没有thinking时的惩罚
+    redundancy_weight: float = 0.3  # 冗余度惩罚权重：高重复内容时的惩罚
+    redundancy_threshold: float = 0.3  # 冗余度阈值：超过此值才惩罚
 
     # 训练设置（根据scale调整）
     num_steps: int = 200
@@ -95,8 +97,13 @@ class ReasoningConfig:
     learning_rate: float = 1e-6
     clip_ratio_low: float = 0.8
     clip_ratio_high: float = 1.28
-    kl_coef: float = 0.0
+    kl_coef: float = 0.0  # TODO: Tinker PPO 不支持 kl_coef，需要手动实现 KL 惩罚
     temperature: float = 1.0
+
+    # 早停设置
+    early_stopping: bool = True
+    early_stopping_patience: int = 3  # 连续 N 次 eval 下降后停止
+    early_stopping_threshold: float = 0.05  # 下降超过此比例触发计数
 
     # 生成设置
     max_prompt_length: int = 1024  # MATH问题更长
@@ -126,7 +133,7 @@ class ReasoningConfig:
             "medium": {
                 "num_steps": 800,
                 "batch_size": 32,
-                "eval_interval": 20,
+                "eval_interval": 10,  # 更频繁评估，便于早停
                 "save_interval": 10,
                 "eval_samples": 200,
             },
@@ -277,6 +284,13 @@ def load_math_dataset(
             samples = all_items[:max_samples]
         else:
             samples = all_items
+
+    # 过滤无效样本（空 answer 或无效 answer）
+    original_count = len(samples)
+    samples = [s for s in samples if s.get("answer") and s["answer"].strip()]
+    filtered_count = original_count - len(samples)
+    if filtered_count > 0:
+        print(f"  [WARNING] 过滤了 {filtered_count} 个无效样本（空 answer）")
 
     # 最终打乱（分层采样后各科目是连续的，需要混合）
     random.shuffle(samples)
@@ -600,22 +614,37 @@ class MathReasoningVerifier:
     支持格式奖励：
     - 如果使用了 <think>...</think> 格式，给予额外奖励
     - 如果没有使用格式，轻微惩罚
+
+    支持冗余度惩罚：
+    - 检测响应中的重复/冗余内容
+    - 对 reward hacking 行为（长重复内容）进行惩罚
     """
 
     # Thinking token IDs (Qwen3)
     THINK_END_TOKEN_ID = 151668  # </think>
 
-    def __init__(self, format_reward_weight: float = 0.1):
+    def __init__(
+        self,
+        format_reward_weight: float = 0.1,
+        redundancy_weight: float = 0.3,
+        redundancy_threshold: float = 0.3,
+    ):
         """
         Args:
             format_reward_weight: 格式奖励/惩罚的权重
                 - 正确答案 + 有thinking: reward = 1.0
                 - 正确答案 + 无thinking: reward = 1.0 - format_reward_weight
                 - 错误答案: reward = 0.0
+            redundancy_weight: 冗余度惩罚的最大权重 (默认 0.3)
+            redundancy_threshold: 冗余度阈值，超过此值才惩罚 (默认 0.3)
         """
         import re
+        import zlib
         self.re = re
+        self.zlib = zlib
         self.format_reward_weight = format_reward_weight
+        self.redundancy_weight = redundancy_weight
+        self.redundancy_threshold = redundancy_threshold
 
     def has_thinking_format(self, tokens: List[int] = None, text: str = None) -> bool:
         """
@@ -637,6 +666,155 @@ class MathReasoningVerifier:
             return "</think>" in text
 
         return False
+
+    def _compute_compression_redundancy(self, text: str) -> float:
+        """
+        使用压缩率计算文本冗余度
+
+        原理：高重复内容压缩后体积小 → 低压缩比 → 高冗余分数
+
+        Args:
+            text: 输入文本
+
+        Returns:
+            冗余度分数 (0-1)，越高表示越冗余
+        """
+        if len(text) < 100:
+            return 0.0
+
+        text_bytes = text.encode('utf-8')
+        compressed = self.zlib.compress(text_bytes, level=9)
+
+        # 压缩比 = compressed_size / original_size
+        # 典型范围: 0.1 (高重复) - 0.7 (低重复)
+        compression_ratio = len(compressed) / len(text_bytes)
+
+        # 归一化到 0-1，反转使高值=高冗余
+        # 压缩比 0.1 → 冗余度 1.0
+        # 压缩比 0.7 → 冗余度 0.0
+        redundancy = max(0, min(1, (0.7 - compression_ratio) / 0.6))
+
+        return redundancy
+
+    def _compute_ngram_redundancy(self, text: str, n: int = 5) -> float:
+        """
+        计算 n-gram 重复率
+
+        Args:
+            text: 输入文本
+            n: n-gram 大小
+
+        Returns:
+            重复率 (0-1)，越高表示越多重复
+        """
+        words = text.split()
+        if len(words) < n * 2:
+            return 0.0
+
+        ngrams = [tuple(words[i:i+n]) for i in range(len(words) - n + 1)]
+        if not ngrams:
+            return 0.0
+
+        unique_ratio = len(set(ngrams)) / len(ngrams)
+        return 1.0 - unique_ratio
+
+    def _compute_chunk_similarity(self, text: str, chunk_size: int = 500, shingle_k: int = 5) -> float:
+        """
+        计算相邻 chunk 之间的平均相似度（轻量级版本）
+
+        原理：将文本切分成 chunks，用 k-shingles 计算相邻 chunk 的 Jaccard 相似度
+        高相似度意味着不同位置的内容高度重复
+
+        Args:
+            text: 输入文本
+            chunk_size: 每个 chunk 的字符数
+            shingle_k: k-shingle 的大小
+
+        Returns:
+            平均 chunk 相似度 (0-1)，越高表示越多近似重复
+        """
+        if len(text) < chunk_size * 2:
+            return 0.0
+
+        # 切分成 chunks（50% overlap 以捕捉边界情况）
+        step = chunk_size // 2
+        chunks = [text[i:i+chunk_size] for i in range(0, len(text) - chunk_size + 1, step)]
+
+        if len(chunks) < 2:
+            return 0.0
+
+        def get_shingles(s: str) -> set:
+            """获取 k-character shingles"""
+            if len(s) < shingle_k:
+                return set()
+            return set(s[i:i+shingle_k] for i in range(len(s) - shingle_k + 1))
+
+        # 计算相邻 chunk 的 Jaccard 相似度
+        similarities = []
+        for i in range(len(chunks) - 1):
+            shingles_a = get_shingles(chunks[i])
+            shingles_b = get_shingles(chunks[i + 1])
+
+            if not shingles_a or not shingles_b:
+                continue
+
+            intersection = len(shingles_a & shingles_b)
+            union = len(shingles_a | shingles_b)
+
+            if union > 0:
+                similarities.append(intersection / union)
+
+        if not similarities:
+            return 0.0
+
+        return sum(similarities) / len(similarities)
+
+    def compute_redundancy(self, text: str) -> Dict[str, float]:
+        """
+        综合计算文本冗余度
+
+        使用两种方法计算惩罚：
+        1. 压缩率（权重 0.6）：捕捉字符级重复
+        2. N-gram 重复率（权重 0.4）：捕捉词级重复
+
+        额外监控指标（不参与惩罚计算）：
+        3. Chunk similarity：检测近似重复，用于监控潜在的"狡猾"模式
+
+        Args:
+            text: 输入文本
+
+        Returns:
+            包含各项指标的字典：
+            - compression_score: 压缩率冗余分数
+            - ngram_score: N-gram 重复率
+            - chunk_similarity: 相邻 chunk 相似度（仅监控）
+            - combined_score: 综合冗余分数（用于惩罚）
+            - penalty: 实际惩罚值（考虑阈值）
+        """
+        compression_score = self._compute_compression_redundancy(text)
+        ngram_score = self._compute_ngram_redundancy(text, n=5)
+        chunk_similarity = self._compute_chunk_similarity(text)
+
+        # 加权平均（压缩率更可靠）
+        # 注意：chunk_similarity 仅作为监控指标，不参与惩罚计算
+        combined_score = 0.6 * compression_score + 0.4 * ngram_score
+
+        # 只有超过阈值才惩罚
+        if combined_score < self.redundancy_threshold:
+            penalty = 0.0
+        else:
+            # 超过阈值的部分线性惩罚
+            excess = combined_score - self.redundancy_threshold
+            max_excess = 1.0 - self.redundancy_threshold
+            penalty = (excess / max_excess) * self.redundancy_weight
+
+        return {
+            "compression_score": compression_score,
+            "ngram_score": ngram_score,
+            "chunk_similarity": chunk_similarity,  # 监控指标
+            "combined_score": combined_score,
+            "penalty": penalty,
+        }
 
     def _normalize_answer(self, answer: str) -> str:
         """标准化答案字符串"""
@@ -933,6 +1111,7 @@ class MathReasoningVerifier:
         gold: str,
         tokens: List[int] = None,
         check_format: bool = True,
+        check_redundancy: bool = True,
     ) -> Dict:
         """
         验证答案并计算奖励
@@ -942,9 +1121,10 @@ class MathReasoningVerifier:
             gold: 标准答案
             tokens: 生成的 token 列表（用于检查 thinking 格式）
             check_format: 是否检查格式并应用格式奖励
+            check_redundancy: 是否检查冗余度并应用冗余惩罚
 
         Returns:
-            包含 is_correct, reward, extracted, has_thinking 等字段的字典
+            包含 is_correct, reward, extracted, has_thinking, redundancy 等字段的字典
         """
         extracted = self.extract_answer(response)
 
@@ -952,6 +1132,11 @@ class MathReasoningVerifier:
         has_thinking = False
         if check_format and self.format_reward_weight > 0:
             has_thinking = self.has_thinking_format(tokens=tokens, text=response)
+
+        # 计算冗余度
+        redundancy_info = {"combined_score": 0.0, "penalty": 0.0}
+        if check_redundancy and self.redundancy_weight > 0:
+            redundancy_info = self.compute_redundancy(response)
 
         if extracted is None:
             return {
@@ -961,6 +1146,9 @@ class MathReasoningVerifier:
                 "gold_normalized": self._normalize_answer(gold),
                 "has_thinking": has_thinking,
                 "format_penalty": 0.0,
+                "redundancy_score": redundancy_info["combined_score"],
+                "redundancy_penalty": redundancy_info["penalty"],
+                "chunk_similarity": redundancy_info.get("chunk_similarity", 0.0),
             }
 
         # 标准化比较
@@ -983,19 +1171,25 @@ class MathReasoningVerifier:
             is_correct = False
 
         # 计算奖励
+        format_penalty = 0.0
+        redundancy_penalty = redundancy_info["penalty"]
+
         if is_correct:
             if has_thinking:
-                # 正确 + 有 thinking: 满分
+                # 正确 + 有 thinking: 基础满分
                 reward = 1.0
-                format_penalty = 0.0
             else:
-                # 正确 + 无 thinking: 轻微惩罚
+                # 正确 + 无 thinking: 格式惩罚
                 format_penalty = self.format_reward_weight if check_format else 0.0
                 reward = 1.0 - format_penalty
+
+            # 应用冗余度惩罚（对正确答案也惩罚重复内容）
+            reward = max(0.0, reward - redundancy_penalty)
         else:
-            # 错误答案: 0 分
+            # 错误答案: 0 分（不需要额外惩罚）
             reward = 0.0
             format_penalty = 0.0
+            redundancy_penalty = 0.0  # 错误答案不记录冗余惩罚
 
         return {
             "is_correct": is_correct,
@@ -1004,6 +1198,9 @@ class MathReasoningVerifier:
             "gold_normalized": gold_norm,
             "has_thinking": has_thinking,
             "format_penalty": format_penalty,
+            "redundancy_score": redundancy_info["combined_score"],
+            "redundancy_penalty": redundancy_penalty,
+            "chunk_similarity": redundancy_info.get("chunk_similarity", 0.0),
         }
 
 
@@ -1236,19 +1433,32 @@ class ReasoningTrainer:
         correct_count = 0
         total_count = 0
 
+        total_redundancy_score = 0.0
+        total_redundancy_penalty = 0.0
+        total_chunk_similarity = 0.0
+
         for samples, gold in zip(all_samples, gold_answers):
             rewards = []
             for sample in samples:
-                # 传递 tokens 以检查 thinking 格式
+                # 传递 tokens 以检查 thinking 格式和冗余度
                 result = self.verifier.verify(
                     sample["text"],
                     gold,
                     tokens=sample.get("tokens"),
                     check_format=self.config.reasoning_mode,
+                    check_redundancy=self.config.reasoning_mode,
                 )
                 sample["reward"] = result["reward"]
                 sample["has_thinking"] = result.get("has_thinking", False)
+                sample["redundancy_score"] = result.get("redundancy_score", 0.0)
+                sample["redundancy_penalty"] = result.get("redundancy_penalty", 0.0)
+                sample["chunk_similarity"] = result.get("chunk_similarity", 0.0)
                 rewards.append(result["reward"])
+
+                total_redundancy_score += result.get("redundancy_score", 0.0)
+                total_redundancy_penalty += result.get("redundancy_penalty", 0.0)
+                total_chunk_similarity += result.get("chunk_similarity", 0.0)
+
                 if result["is_correct"]:
                     correct_count += 1
                 total_count += 1
@@ -1312,6 +1522,8 @@ class ReasoningTrainer:
                 )
                 data.append(datum)
 
+            # 注意：Tinker PPO loss 只支持 clip_low_threshold 和 clip_high_threshold
+            # kl_coef 不被支持，KL 惩罚需要在 advantage 计算时手动实现
             fwd_bwd_future = self.training_client.forward_backward(
                 data=data,
                 loss_fn="ppo",
@@ -1367,6 +1579,9 @@ class ReasoningTrainer:
             "step_time": time.time() - step_start,
             "avg_response_length": total_response_tokens / total_count if total_count > 0 else 0,
             "avg_thinking_length": total_thinking_tokens / thinking_count if thinking_count > 0 else 0,
+            "avg_redundancy_score": total_redundancy_score / total_count if total_count > 0 else 0,
+            "avg_redundancy_penalty": total_redundancy_penalty / total_count if total_count > 0 else 0,
+            "avg_chunk_similarity": total_chunk_similarity / total_count if total_count > 0 else 0,
         }
 
         for key, value in stats.items():
@@ -1588,6 +1803,7 @@ def main():
     if config.reasoning_mode:
         print(f"Thinking Budget: {config.thinking_budget}")
         print(f"Format Reward Weight: {config.format_reward_weight} (penalty for missing </think>)")
+        print(f"Redundancy Penalty: weight={config.redundancy_weight}, threshold={config.redundancy_threshold}")
     print(f"Max Response Length: {config.max_response_length}")
     print(f"Steps: {config.num_steps}")
     print(f"Batch size: {config.batch_size}")
@@ -1637,8 +1853,12 @@ def main():
     train_data = load_math_dataset("train")
     eval_data = load_math_dataset("test", max_samples=config.eval_samples)
 
-    # 初始化验证器（使用配置的格式奖励权重）
-    verifier = MathReasoningVerifier(format_reward_weight=config.format_reward_weight)
+    # 初始化验证器（使用配置的格式奖励和冗余度惩罚权重）
+    verifier = MathReasoningVerifier(
+        format_reward_weight=config.format_reward_weight,
+        redundancy_weight=config.redundancy_weight,
+        redundancy_threshold=config.redundancy_threshold,
+    )
 
     if args.dry_run:
         print("\n[Dry Run Mode] 跳过 Tinker API 调用")
@@ -1741,6 +1961,11 @@ def main():
     print("\n开始训练...")
     print("-" * 60)
 
+    # 早停相关变量
+    best_eval_accuracy = 0.0
+    early_stop_counter = 0
+    should_stop = False
+
     for step in range(start_step + 1, config.num_steps + 1):
         batch_indices = random.sample(range(len(train_data)), config.batch_size)
         batch = [train_data[i] for i in batch_indices]
@@ -1770,6 +1995,32 @@ def main():
             f"Time: {stats['step_time']:.1f}s",
         ])
         print(" | ".join(output_parts))
+
+        # 训练健康监控
+        if config.reasoning_mode:
+            avg_resp_len = stats.get('avg_response_length', 0)
+            thinking_rate = stats.get('thinking_rate', 1.0)
+            avg_redundancy = stats.get('avg_redundancy_score', 0)
+            avg_chunk_sim = stats.get('avg_chunk_similarity', 0)
+
+            # 响应长度爆炸警告
+            if avg_resp_len > 5000:
+                print(f"  [WARNING] Response length explosion: {avg_resp_len:.0f} tokens (threshold: 5000)")
+
+            # Thinking rate 下降警告
+            if thinking_rate < 0.6:
+                print(f"  [WARNING] Low thinking rate: {thinking_rate:.0%} (threshold: 60%)")
+
+            # 冗余度过高警告
+            if avg_redundancy > 0.4:
+                print(f"  [WARNING] High redundancy score: {avg_redundancy:.1%} (threshold: 40%)")
+
+            # Chunk similarity 异常警告（检测潜在的"狡猾"模式）
+            # 如果 chunk_sim 高但 redundancy 低，可能是近似重复绕过了压缩率检测
+            if avg_chunk_sim > 0.5 and avg_redundancy < 0.3:
+                print(f"  [WARNING] Suspicious pattern: high chunk_sim ({avg_chunk_sim:.1%}) but low redundancy ({avg_redundancy:.1%})")
+            elif avg_chunk_sim > 0.6:
+                print(f"  [WARNING] High chunk similarity: {avg_chunk_sim:.1%} (threshold: 60%)")
 
         # 评估
         if step % config.eval_interval == 0:
@@ -1801,6 +2052,41 @@ def main():
             samples_file = run_dir / f"eval_samples_step_{step}.json"
             save_eval_samples(eval_stats["samples"], samples_file, step)
 
+            # 早停检查
+            if config.early_stopping:
+                current_accuracy = eval_stats["eval_accuracy"]
+
+                if current_accuracy > best_eval_accuracy:
+                    # 新的最佳结果
+                    best_eval_accuracy = current_accuracy
+                    early_stop_counter = 0
+                elif current_accuracy < best_eval_accuracy - config.early_stopping_threshold:
+                    # 显著下降
+                    early_stop_counter += 1
+                    print(f"  [Early Stop] Accuracy dropped: {current_accuracy:.2%} < {best_eval_accuracy:.2%} - {config.early_stopping_threshold:.0%}")
+                    print(f"               Counter: {early_stop_counter}/{config.early_stopping_patience}")
+
+                    if early_stop_counter >= config.early_stopping_patience:
+                        print(f"\n{'='*60}")
+                        print(f"早停触发！连续 {early_stop_counter} 次评估准确率下降")
+                        print(f"最佳 Eval Accuracy: {best_eval_accuracy:.2%}")
+                        print(f"当前 Eval Accuracy: {current_accuracy:.2%}")
+                        print(f"{'='*60}")
+                        should_stop = True
+                else:
+                    # 小幅波动，不计入
+                    pass
+
+        # 检查是否需要早停
+        if should_stop:
+            # 保存当前状态后退出
+            checkpoint_name = f"checkpoint_step_{step}_early_stop"
+            training_client.save_state(checkpoint_name)
+            print(f"  [Save] Early stop checkpoint: {checkpoint_name}")
+            with open(run_dir / "history.json", "w") as f:
+                json.dump(dict(trainer.history), f, indent=2)
+            break
+
         # 保存检查点
         if step % config.save_interval == 0:
             checkpoint_name = f"checkpoint_step_{step}"
@@ -1812,7 +2098,11 @@ def main():
 
     # 最终保存
     print("\n" + "=" * 60)
-    print("训练完成!")
+    if should_stop:
+        print(f"训练提前停止 (早停机制触发于 Step {step})")
+        print(f"最佳 Eval Accuracy: {best_eval_accuracy:.2%}")
+    else:
+        print("训练完成!")
     training_client.save_state("final_model")
 
     # 最终评估
