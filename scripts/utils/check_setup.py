@@ -35,11 +35,11 @@ def main():
         ("datasets", "datasets"),
         ("numpy", "numpy"),
         ("tqdm", "tqdm"),
+        ("tinker", "tinker"),
     ]
 
-    # 可选但推荐的包
+    # 可选的包
     optional_packages = [
-        ("tinker", "tinker"),
         ("vllm", "vllm"),
         ("accelerate", "accelerate"),
         ("peft", "peft"),
