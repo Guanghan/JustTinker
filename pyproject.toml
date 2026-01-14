@@ -1,12 +1,12 @@
 [project]
-name = "rlvr"
+name = "JustTinker"
 version = "0.1.0"
-description = "Reinforcement Learning with Verifiable Rewards - 学习项目"
+description = "Minimal Reinforcement Learning with Verifiable Rewards using Tinker Training API"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "Guanghan Ning", email = "guanghan.ning@bytedance.com"}
+    {name = "Guanghan Ning", email = "guanghan.ning@gmail.com"}
 ]
 
 [tool.ruff]
