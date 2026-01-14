@@ -190,9 +190,10 @@ def plot_training_curves(history: dict, output_path: Path, title_prefix: str = "
                 fontsize=10,
                 color="green",
             )
-            # 标注最高值
+            # 标注最高值（如果有多个相同最大值，取最后一个）
             max_aime_acc = max(eval_aime_accuracy)
-            max_aime_idx = eval_aime_accuracy.index(max_aime_acc)
+            # 找到所有最大值的索引，取最后一个
+            max_aime_idx = len(eval_aime_accuracy) - 1 - eval_aime_accuracy[::-1].index(max_aime_acc)
             max_aime_step = aime_eval_steps[max_aime_idx]
             ax3.annotate(
                 f"Best: {max_aime_acc:.2%}",
