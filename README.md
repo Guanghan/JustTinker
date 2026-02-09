@@ -495,14 +495,65 @@ export TINKER_API_KEY=your_api_key
 
 > **Note**: Costs are based on Tinker pricing for Qwen3-4B-Instruct-2507 ($0.22/M tokens). Actual costs are often lower than estimates due to early stopping and response length variance.
 
+## TODO: Process Reward Models with Universal Verifiers
+
+The current pipeline uses **Outcome Reward Models (ORMs)** — binary correct/incorrect verification of the final answer. A natural next step is to add **Process Reward Models (PRMs)** that provide intermediate feedback on each reasoning step, complementing the existing ORM-based RLVR.
+
+### Why PRMs?
+
+ORMs create a **sparse credit assignment problem**: when a multi-step reasoning chain fails, the model cannot determine *which* step went wrong. PRMs provide dense, step-level signals that:
+
+1. **Improve credit assignment** — errors are localized to specific reasoning steps
+2. **Accelerate RL convergence** — dense rewards are more sample-efficient than sparse binary rewards
+3. **Enable test-time search** — steps rated negatively can trigger backtracking or re-sampling
+4. **Prevent error propagation** — bad intermediate steps are caught before they compound
+
+### Planned: Implicit PRMs via Logprobs
+
+Rather than training a separate PRM with expensive step-level human annotations, we plan to implement **implicit process rewards** derived from model log-probabilities. Key approaches to explore:
+
+| Approach | Paper | Core Idea |
+|----------|-------|-----------|
+| **Implicit PRM** | [Free Process Rewards without Process Labels](https://arxiv.org/abs/2412.01981) (Yuan et al., ICML 2025) | Parameterize process reward as log-likelihood ratio between policy and reference model on partial responses. No step-level annotations needed. Outperforms Math-Shepherd with 1/38 of the training data. |
+| **Online Implicit PRM** | [PRIME: Process Reinforcement through Implicit Rewards](https://arxiv.org/abs/2502.01456) (Cui et al., 2025) | Integrate implicit PRM into online RL training loop. The PRM updates alongside the policy, avoiding reward hacking from stale reward models. Achieves 15.1% improvement on reasoning benchmarks from Qwen2.5-Math-7B-Base. |
+| **Ascending Confidence** | [PACR: Progressively Ascending Confidence Reward](https://arxiv.org/abs/2510.22255) (Yoon et al., 2025) | Use the model's evolving belief in the correct answer (token probability of ground-truth) as dense reward. Inductive bias: along a good reasoning chain, P(correct answer) should monotonically increase. |
+| **Generative Verifiers** | [GenRM: Reward Modeling as Next-Token Prediction](https://arxiv.org/abs/2408.15240) (Zhang et al., ICLR 2025) | Represent solution correctness via LLM's probability of generating "correct" vs. "incorrect" as next token. Enables chain-of-thought verification and inference-time compute scaling. |
+| **Universal Likelihood Rewards** | [Likelihood-Based Reward Designs for General LLM Reasoning](https://arxiv.org/abs/2602.03979) (Kwiatkowski et al., 2025) | Log-probability of reference answer as reward — the only variant that works across both verifiable (math) and non-verifiable (long-form proofs) domains. |
+
+### Implementation Plan
+
+- [ ] **Phase 1**: Implement implicit PRM baseline following [Free Process Rewards](https://arxiv.org/abs/2412.01981) — compute log-likelihood ratios on partial response prefixes using the SFT checkpoint as reference model
+- [ ] **Phase 2**: Integrate implicit PRM into the GRPO training loop following [PRIME](https://arxiv.org/abs/2502.01456) — combine dense process rewards with existing binary outcome rewards
+- [ ] **Phase 3**: Experiment with ascending confidence rewards ([PACR](https://arxiv.org/abs/2510.22255)) as an alternative dense signal that requires no reference model
+- [ ] **Phase 4**: Evaluate generative verification ([GenRM](https://arxiv.org/abs/2408.15240)) for domains beyond math where binary verifiers are unavailable
+
+### Feasibility Notes
+
+Implicit PRMs via logprobs are particularly well-suited for this project because:
+
+1. **No extra annotation cost** — process rewards are derived from the policy's own log-probabilities, requiring zero step-level labels
+2. **Compatible with JustRL** — PRIME demonstrates that implicit PRMs work within on-policy RL (no KL penalty), aligning with our JustRL-style training
+3. **Online updates** — the implicit PRM evolves with the policy, avoiding the reward hacking issues we encountered in Exp 001
+4. **Infrastructure-friendly** — logprob computation is a standard model inference operation, no additional model training pipeline needed on Tinker
+
 ## References
 
 ### Papers
 
+**Core Methodology**
 - [JustRL: Simplicity at Scale](https://arxiv.org/abs/2512.16649) — Core methodology
 - [DeepSeek-R1 Technical Report](https://github.com/deepseek-ai/DeepSeek-R1) — GRPO algorithm
 - [DAPO: Decoupled Clip and Dynamic Sampling](https://arxiv.org/abs/2503.14476) — Advanced techniques
 - [RL's Razor: On-Policy Implicit Regularization](https://arxiv.org/abs/2505.23720) — Why KL penalty may be unnecessary
+
+**Process Reward Models & Universal Verifiers** (planned future work)
+- [Free Process Rewards without Process Labels](https://arxiv.org/abs/2412.01981) (Yuan et al., ICML 2025) — Implicit PRM via log-likelihood ratios
+- [PRIME: Process Reinforcement through Implicit Rewards](https://arxiv.org/abs/2502.01456) (Cui et al., 2025) — Online implicit PRM in RL loop
+- [PACR: Progressively Ascending Confidence Reward](https://arxiv.org/abs/2510.22255) (Yoon et al., 2025) — Ascending answer probability as dense reward
+- [GenRM: Reward Modeling as Next-Token Prediction](https://arxiv.org/abs/2408.15240) (Zhang et al., ICLR 2025) — Generative verifiers
+- [Likelihood-Based Reward Designs for General LLM Reasoning](https://arxiv.org/abs/2602.03979) (Kwiatkowski et al., 2025) — Universal logprob rewards
+- [Let's Verify Step by Step](https://arxiv.org/abs/2305.20050) (Lightman et al., ICLR 2024) — Foundational PRM paper (PRM800K)
+- [Math-Shepherd](https://arxiv.org/abs/2312.08935) (Wang et al., ACL 2024) — PRM without human annotations via Monte Carlo rollouts
 
 ### Frameworks
 
