@@ -519,6 +519,7 @@ Rather than training a separate PRM with expensive step-level human annotations,
 | **Ascending Confidence** | [PACR: Progressively Ascending Confidence Reward](https://arxiv.org/abs/2510.22255) (Yoon et al., 2025) | Use the model's evolving belief in the correct answer (token probability of ground-truth) as dense reward. Inductive bias: along a good reasoning chain, P(correct answer) should monotonically increase. |
 | **Generative Verifiers** | [GenRM: Reward Modeling as Next-Token Prediction](https://arxiv.org/abs/2408.15240) (Zhang et al., ICLR 2025) | Represent solution correctness via LLM's probability of generating "correct" vs. "incorrect" as next token. Enables chain-of-thought verification and inference-time compute scaling. |
 | **Universal Likelihood Rewards** | [Likelihood-Based Reward Designs for General LLM Reasoning](https://arxiv.org/abs/2602.03979) (Kwiatkowski et al., 2025) | Log-probability of reference answer as reward — the only variant that works across both verifiable (math) and non-verifiable (long-form proofs) domains. |
+| **Meta-Evaluation Rewards** | [RLME: RL from Meta-Evaluation](https://arxiv.org/abs/2601.21268) (Rentschler & Roberts, 2026) | Use evaluator LLM's probability of positive judgment on meta-questions (e.g., "Is the reasoning correct?") as reward. No ground-truth labels needed. Uses GRPO. Achieves accuracy comparable to label-based training and generalizes to open-domain settings. |
 
 ### Implementation Plan
 
@@ -526,6 +527,7 @@ Rather than training a separate PRM with expensive step-level human annotations,
 - [ ] **Phase 2**: Integrate implicit PRM into the GRPO training loop following [PRIME](https://arxiv.org/abs/2502.01456) — combine dense process rewards with existing binary outcome rewards
 - [ ] **Phase 3**: Experiment with ascending confidence rewards ([PACR](https://arxiv.org/abs/2510.22255)) as an alternative dense signal that requires no reference model
 - [ ] **Phase 4**: Evaluate generative verification ([GenRM](https://arxiv.org/abs/2408.15240)) for domains beyond math where binary verifiers are unavailable
+- [ ] **Phase 5**: Explore meta-evaluation rewards ([RLME](https://arxiv.org/abs/2601.21268)) — use an evaluator LLM's judgment probability as reward via GRPO, enabling training without ground-truth labels for open-domain reasoning tasks
 
 ### Feasibility Notes
 
@@ -535,6 +537,7 @@ Implicit PRMs via logprobs are particularly well-suited for this project because
 2. **Compatible with JustRL** — PRIME demonstrates that implicit PRMs work within on-policy RL (no KL penalty), aligning with our JustRL-style training
 3. **Online updates** — the implicit PRM evolves with the policy, avoiding the reward hacking issues we encountered in Exp 001
 4. **Infrastructure-friendly** — logprob computation is a standard model inference operation, no additional model training pipeline needed on Tinker
+5. **Theoretical grounding** — [ReMiT](https://arxiv.org/abs/2602.03075) (Huang et al., 2026) independently proves from KL-regularized RL theory that the token-level log-likelihood ratio between an RL model and a base model corresponds to an implicit reward function capturing reasoning quality. This provides additional theoretical justification for using logprob ratios as process rewards, beyond the empirical evidence from Implicit PRM and PRIME
 
 ## References
 
@@ -552,6 +555,7 @@ Implicit PRMs via logprobs are particularly well-suited for this project because
 - [PACR: Progressively Ascending Confidence Reward](https://arxiv.org/abs/2510.22255) (Yoon et al., 2025) — Ascending answer probability as dense reward
 - [GenRM: Reward Modeling as Next-Token Prediction](https://arxiv.org/abs/2408.15240) (Zhang et al., ICLR 2025) — Generative verifiers
 - [Likelihood-Based Reward Designs for General LLM Reasoning](https://arxiv.org/abs/2602.03979) (Kwiatkowski et al., 2025) — Universal logprob rewards
+- [RLME: RL from Meta-Evaluation](https://arxiv.org/abs/2601.21268) (Rentschler & Roberts, 2026) — Meta-evaluation rewards without ground-truth labels
 - [Let's Verify Step by Step](https://arxiv.org/abs/2305.20050) (Lightman et al., ICLR 2024) — Foundational PRM paper (PRM800K)
 - [Math-Shepherd](https://arxiv.org/abs/2312.08935) (Wang et al., ACL 2024) — PRM without human annotations via Monte Carlo rollouts
 
