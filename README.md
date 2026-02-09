@@ -15,6 +15,22 @@
 
 > **JustRL**: Simplicity is all you need. No KL penalty, no entropy regularization, no length penalty—just RL.
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Stage 1: Cold-Start SFT](#stage-1-cold-start-sft)
+- [Stage 2: JustRL (GRPO)](#stage-2-justrl-grpo)
+  - [Experiment 001: Training Collapse](#experiment-001-training-collapse-reward-hacking)
+  - [Experiment 002: With Redundancy Penalty](#experiment-002-with-redundancy-penalty)
+  - [Experiment 003: Harder Training & Eval Datasets](#experiment-003-harder-training--eval-datasets)
+- [Project Structure](#project-structure)
+- [Quick Start](#quick-start)
+- [Cost Analysis](#cost-analysis)
+- [TODO: Process Reward Models with Universal Verifiers](#todo-process-reward-models-with-universal-verifiers)
+- [References](#references)
+- [License](#license)
+- [Citation](#citation)
+
 ## Overview
 
 This repository demonstrates a two-stage training pipeline to transform a standard instruction-tuned model into a reasoning model with explicit thinking capabilities:
